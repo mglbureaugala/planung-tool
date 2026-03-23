@@ -8,6 +8,7 @@ const NAV = [
   { href: '/chat', label: 'Entwurfsparameter' },
   { href: '/grundstueck', label: 'Grundstück-Check' },
   { href: '/projekte', label: 'Projekte' },
+  { href: '/wissenspool', label: 'Wissenspool' },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

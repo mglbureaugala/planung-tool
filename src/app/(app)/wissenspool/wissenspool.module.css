@@ -1,0 +1,10 @@
+.themaCard {
+  background: var(--surface);
+  padding: 1.1rem 1.25rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.themaCard:hover {
+  background: #F0EDE8;
+}

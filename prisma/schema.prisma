@@ -48,6 +48,57 @@ model GrundstueckCheck {
   @@map("grundstueck_checks")
 }
 
+// ── Wissenspool (ZT) ─────────────────────────────────────────────
+
+enum ZtThema {
+  BERUFSRECHT
+  HAFTUNG
+  WIENER_BAUORDNUNG
+  BAURECHT_WIEN
+  OIB_RICHTLINIEN
+  VERGABERECHT
+  RAUMPLANUNG
+  GRUNDBUCHSRECHT
+  VERWALTUNGSRECHT
+  BWL
+  SOZIALE_ABSICHERUNG
+}
+
+model ZtDocument {
+  id         String    @id @default(cuid())
+  titel      String
+  dateiname  String
+  pfad       String    @unique
+  thema      ZtThema
+  quelle     String?
+  erstelltAm DateTime  @default(now())
+  chunks     ZtChunk[]
+
+  @@map("zt_documents")
+}
+
+model ZtChunk {
+  id         String     @id @default(cuid())
+  documentId String
+  seite      Int?
+  text       String     @db.Text
+  document   ZtDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("zt_chunks")
+}
+
+model ZtUserNote {
+  id             String   @id @default(cuid())
+  thema          ZtThema
+  titel          String?
+  inhalt         String   @db.Text
+  erstelltAm     DateTime @default(now())
+  aktualisiertAm DateTime @updatedAt
+
+  @@map("zt_user_notes")
+}
+
 // Chat-Verlauf (Entwurfsparameter-Fragen)
 model PlanungsChat {
   id         String   @id @default(cuid())
