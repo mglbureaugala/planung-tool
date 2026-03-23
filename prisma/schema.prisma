@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Gespeicherte Raumprogramme
+model Raumprogramm {
+  id             String   @id @default(cuid())
+  name           String
+  gebaeudetyp    String
+  parameter      Json
+  ergebnis       Json
+  notizen        String?  @db.Text
+  erstelltAm     DateTime @default(now())
+  aktualisiertAm DateTime @updatedAt
+
+  @@map("raumprogramme")
+}
+
+// Projekte mit Grundstücksparametern
+model Projekt {
+  id             String             @id @default(cuid())
+  name           String
+  adresse        String?
+  grundstueck_m2 Float?
+  widmung        String?
+  notizen        String?            @db.Text
+  parameter      Json               @default("{}")
+  erstelltAm     DateTime           @default(now())
+  aktualisiertAm DateTime           @updatedAt
+  checks         GrundstueckCheck[]
+
+  @@map("projekte")
+}
+
+// Grundstücks-Schnellchecks
+model GrundstueckCheck {
+  id         String   @id @default(cuid())
+  projektId  String?
+  projekt    Projekt? @relation(fields: [projektId], references: [id], onDelete: SetNull)
+  parameter  Json
+  ergebnis   Json
+  erstelltAm DateTime @default(now())
+
+  @@map("grundstueck_checks")
+}
+
+// Chat-Verlauf (Entwurfsparameter-Fragen)
+model PlanungsChat {
+  id         String   @id @default(cuid())
+  titel      String?
+  verlauf    Json     @default("[]")
+  kontext    String?
+  erstelltAm DateTime @default(now())
+
+  @@map("planungs_chats")
+}
