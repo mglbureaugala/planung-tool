@@ -125,14 +125,20 @@ export function generateLageplan(p: BauParam): string {
   <text x="${PAD_L}" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}" text-transform="uppercase">LAGEPLAN — MAXIMALE BEBAUUNG</text>
   <line x1="${PAD_L}" y1="28" x2="${W - PAD_R}" y2="28" stroke="${BORDER}" stroke-width="0.5"/>
 
-  <!-- Abstandsflächen (Bauwich) -->
-  ${rect(ox, oy, pW, pH, `fill="url(#lp-hatch)" stroke="none"`)}
+  <!-- Grundfläche Grundstück -->
+  ${rect(ox, oy, pW, pH, `fill="${BEIGE}" stroke="none"`)}
+
+  <!-- Bauwich-Zonen nur schraffieren wo wirklich ein Bauwich vorhanden -->
+  ${sv > 0 ? rect(ox, oy, pW, sv, `fill="url(#lp-hatch)" stroke="none"`) : ''}
+  ${sh > 0 ? rect(ox, oy + pH - sh, pW, sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
+  ${ss > 0 ? rect(ox, oy + sv, ss, pH - sv - sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
+  ${ss > 0 ? rect(ox + pW - ss, oy + sv, ss, pH - sv - sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
 
   <!-- Grundstücksgrenze -->
   ${rect(ox, oy, pW, pH, `fill="none" stroke="${GRAY}" stroke-width="1.6" stroke-dasharray="6,3"`)}
 
-  <!-- Baukörper -->
-  ${bkW > 0 && bkH > 0 ? rect(bkX, bkY, bkW, bkH, `fill="${IKB}" fill-opacity="0.18" stroke="${IKB}" stroke-width="2"`) : ''}
+  <!-- Baukörper (keine Transparenz — überdeckt keine Schraffur mehr) -->
+  ${bkW > 0 && bkH > 0 ? rect(bkX, bkY, bkW, bkH, `fill="${IKB}" fill-opacity="0.28" stroke="${IKB}" stroke-width="2"`) : ''}
 
   <!-- Bemaßung: Breite -->
   ${dimH(ox, ox + pW, oy - 16, `${p.breite_m} m`)}

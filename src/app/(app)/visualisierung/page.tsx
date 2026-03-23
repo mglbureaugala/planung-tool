@@ -9,9 +9,10 @@ export default function VisualisierungPage() {
   const [flaeche, setFlaeche] = useState('800')
   const [breite, setBreite] = useState('')
   const [tiefe, setTiefe] = useState('')
+  const [bebauungsweise, setBebauungsweise] = useState('')  // leer = auto
 
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<BauParam | null>(null)
+  const [result, setResult] = useState<(BauParam & { bebauungsweise_quelle?: string }) | null>(null)
   const [error, setError] = useState('')
 
   const adresseRef = useRef<HTMLInputElement>(null)
@@ -31,6 +32,7 @@ export default function VisualisierungPage() {
           grundstueck_m2: parseFloat(flaeche) || undefined,
           breite_m: parseFloat(breite) || undefined,
           tiefe_m: parseFloat(tiefe) || undefined,
+          bebauungsweise_override: bebauungsweise || undefined,
         }),
       })
       const data = await res.json()
@@ -98,6 +100,19 @@ export default function VisualisierungPage() {
             <input style={inputStyle} type="number" value={tiefe}
               onChange={e => setTiefe(e.target.value)} placeholder="auto" />
           </label>
+          <label style={labelStyle}>
+            <span style={labelTextStyle}>
+              Bebauungsweise{' '}
+              <span style={{ color: '#999', fontWeight: 300 }}>(auto aus WFS)</span>
+            </span>
+            <select style={inputStyle} value={bebauungsweise} onChange={e => setBebauungsweise(e.target.value)}>
+              <option value="">— automatisch —</option>
+              <option value="g">geschlossen (g)</option>
+              <option value="gr">gemischt/Gründerzeit (gr)</option>
+              <option value="o">offen (o)</option>
+              <option value="gk">gekuppelt (gk)</option>
+            </select>
+          </label>
         </div>
 
         <div style={{ marginTop: '1rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
@@ -153,7 +168,11 @@ export default function VisualisierungPage() {
           }}>
             <strong>{result.adresse}</strong>
             {result.bezirk ? ` — ${result.bezirk}. Bezirk` : ''}
-            {result.widmung !== '—' ? ` — Widmung: ${result.widmung} (${result.widmung_text})` : ''}
+            {result.widmung !== '—' ? ` — ${result.widmung} (${result.widmung_text})` : ''}
+            {result.bebauungsweise ? ` — ${result.bebauungsweise_text}` : ''}
+            {result.bebauungsweise_quelle && result.bebauungsweise_quelle !== 'manuell'
+              ? <span style={{ color: '#6B7ABD', fontSize: '0.72rem' }}> [{result.bebauungsweise_quelle}]</span>
+              : null}
             {result.plandokument_nr ? (
               <>
                 {' — Bebauungsplan '}

@@ -86,11 +86,19 @@ async function getWidmungAmPunkt(lat: number, lng: number) {
   )
 
   const p = features[0].properties
+
+  // Wien OGD GENFLWIDMUNGOGD liefert Bebauungsweise in BEBAUUNGSWEISE-Feld,
+  // fallback auf WIDMUNG_DETAIL (ältere API-Versionen / manche Layer-Varianten)
+  const bebauungsweise_raw =
+    (p.BEBAUUNGSWEISE ? String(p.BEBAUUNGSWEISE).trim() : null) ||
+    (p.WIDMUNG_DETAIL ? String(p.WIDMUNG_DETAIL).trim() : null) ||
+    null
+
   return {
     widmung: String(p.WIDMUNG ?? '').trim().toUpperCase(),
-    widmung_detail: p.WIDMUNG_DETAIL ? String(p.WIDMUNG_DETAIL) : undefined,
-    widmung_txt: String(p.WIDMUNG_TXT ?? p.WIDMUNGSKLASSE_TXT ?? '').trim(),
-    bezirk: p.BEZIRK ? parseInt(String(p.BEZIRK)) : undefined,
+    bebauungsweise_raw,
+    widmung_txt: String(p.WIDMUNG_TXT ?? p.WIDMUNGSKLASSE_TXT ?? p.BEZEICHNUNG ?? '').trim(),
+    bezirk: p.BEZIRK ? parseInt(String(p.BEZIRK)) : (p.BEZIRKSNUMMER ? parseInt(String(p.BEZIRKSNUMMER)) : undefined),
   }
 }
 
@@ -181,6 +189,7 @@ export async function POST(req: Request) {
     grundstueck_m2: flaeche_input,
     breite_m: breite_input,
     tiefe_m: tiefe_input,
+    bebauungsweise_override,  // Manuelle Überschreibung aus dem Formular
   } = body
 
   if (!adresse?.trim()) {
@@ -232,12 +241,27 @@ export async function POST(req: Request) {
     'II'
   )
 
-  // Bebauungsweise: Plandokument → WFS-Detail → Fallback
-  const bwRaw = plandok?.bebauungsweise?.trim()
-    || parseBebauungsweise(widmungData?.widmung_detail)
-    || 'gr'  // Gründerzeit = häufigster Wiener Fallback
-  const bebauungsweise = bwRaw
-  const bebauungsweise_text = BEBAUUNGSWEISE_TEXT[bebauungsweise] ?? bebauungsweise
+  // Bebauungsweise: Formular-Override → Plandokument → WFS (BEBAUUNGSWEISE-Feld)
+  // Quellen-Ranking: manuelle Eingabe > Bebauungsplan-Analyse > WFS
+  const bwRaw = (bebauungsweise_override?.trim() || null)
+    || (plandok?.bebauungsweise?.trim() || null)
+    || parseBebauungsweise(widmungData?.bebauungsweise_raw)
+    || null  // Unbekannt — keine Annahme treffen
+
+  // Normalisierung: WFS liefert manchmal Volltext ("geschlossen", "offen", ...)
+  // oder Kürzel ("g", "o", "gk", "gr")
+  const bebauungsweise = bwRaw ?? ''
+  const bebauungsweise_text = BEBAUUNGSWEISE_TEXT[bebauungsweise]
+    ?? (bebauungsweise.toLowerCase().includes('geschlossen') ? 'geschlossene Bebauungsweise'
+      : bebauungsweise.toLowerCase().includes('offen') ? 'offene Bebauungsweise'
+      : bebauungsweise.toLowerCase().includes('gekuppelt') ? 'gekuppelte Bebauungsweise'
+      : bebauungsweise || 'nicht bestimmt — bitte manuell wählen')
+
+  // Bebauungsweise-Quell-Transparenz
+  const bwQuelle = bebauungsweise_override ? 'manuell'
+    : plandok?.bebauungsweise ? 'Bebauungsplan'
+    : widmungData?.bebauungsweise_raw ? 'Flächenwidmungsplan'
+    : 'unbekannt'
 
   // Gebäudehöhe: Plandokument-Analyse → WBO-Standardwert für Bauklasse
   const gebaeudehoehe = plandok?.max_hoehe_m ?? BAUKLASSE_GEBAEUDEHOEHE[bauklasse] ?? 7.5
@@ -262,22 +286,34 @@ export async function POST(req: Request) {
 
   // ─── Bauwich §78 WBO Wien ─────────────────────────────────────────────────
 
-  const isGeschlossen = bebauungsweise === 'g' || bebauungsweise === 'geschlossen'
-  const isGekuppelt = bebauungsweise === 'gk' || bebauungsweise === 'gekuppelt'
+  // Normalisierung für Bauwich-Berechnung
+  const bwNorm = bebauungsweise.toLowerCase()
+  const isGeschlossen = bwNorm === 'g' || bwNorm.startsWith('geschlossen')
+    || bwNorm === 'gr' || bwNorm.startsWith('gemischt')  // Gründerzeit = geschlossen an Straße
+  const isGekuppelt = bwNorm === 'gk' || bwNorm.startsWith('gekuppelt')
+  const isOffen = bwNorm === 'o' || bwNorm.startsWith('offen')
+  const isUnbekannt = !bebauungsweise
 
   let bauwich_s: number
   let bauwich_v: number
   let bauwich_h: number
 
   if (isGeschlossen) {
+    // Geschlossene / Gründerzeit-Bebauungsweise §78 Abs. 1 BO Wien:
+    // Kein seitlicher Bauwich, keine Vorgartenzone
+    // Hinterer Bauwich: 0 (Bebauungsplan kann Hofzone vorschreiben, aber kein WBO-Standard)
     bauwich_s = 0; bauwich_v = 0; bauwich_h = 0
   } else if (isGekuppelt) {
-    // Eine Seite an Grundgrenze, andere Seite mit h/2, mind. 3m
+    // Gekuppelte Bebauungsweise: eine Seite an Grundgrenze, andere Seite § 78
     const bs = minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o')
-    bauwich_s = Math.round(bs / 2 * 10) / 10  // Ø beider Seiten
+    bauwich_s = Math.round(bs / 2 * 10) / 10  // Effektiv: nur eine Seite hat Bauwich
+    bauwich_v = 3.0; bauwich_h = 3.0
+  } else if (isOffen || isUnbekannt) {
+    // Offene Bebauungsweise: seitlicher Bauwich §78 Abs. 2 BO Wien
+    bauwich_s = Math.round(minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o') * 10) / 10
     bauwich_v = 3.0; bauwich_h = 3.0
   } else {
-    // offene / gemischte Bebauungsweise
+    // Sonstige / dichte Bebauungsweise
     bauwich_s = Math.round(minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o') * 10) / 10
     bauwich_v = 3.0; bauwich_h = 3.0
   }
@@ -322,7 +358,14 @@ export async function POST(req: Request) {
 
   // ─── Rückgabe ─────────────────────────────────────────────────────────────
 
-  const result: BauParam = {
+  // Hinweis wenn Bebauungsweise unbekannt
+  if (isUnbekannt) {
+    hinweise.unshift('Bebauungsweise konnte nicht automatisch bestimmt werden. Bitte im Formular manuell auswählen (Bebauungsplan der MA 21 prüfen).')
+  } else {
+    hinweise.unshift(`Bebauungsweise: ${bebauungsweise_text} — Quelle: ${bwQuelle}.`)
+  }
+
+  const result: BauParam & { bebauungsweise_quelle: string } = {
     adresse: coords.adresse_aufgeloest,
     lat: coords.lat,
     lng: coords.lng,
@@ -336,6 +379,7 @@ export async function POST(req: Request) {
     bauklasse,
     bebauungsweise,
     bebauungsweise_text,
+    bebauungsweise_quelle: bwQuelle,
     plandokument_nr: plandok?.plandok_nr,
     plandokument_url: plandok?.plan_url ?? undefined,
     schutzzone: plandok?.schutzzone ?? false,
