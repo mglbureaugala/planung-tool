@@ -51,4 +51,10 @@ export interface BauParam {
   stellplaetze_pflicht: number
   hinweise: string[]
   optimierungstipps: string[]
+
+  // Kataster (BEV DKM, Digitale Katastralmappe — täglich aktualisiert)
+  kg?: string                         // Katastralgemeinde-Nr. (5-stellig, z. B. "01010")
+  gnr?: string                        // Grundstücksnummer (z. B. "1063")
+  ez?: string                         // Einlagezahl (Grundbuch-Bezug)
+  parcel_polygon?: [number, number][] // Parzellen-Polygon in WGS84 [lng, lat]
 }

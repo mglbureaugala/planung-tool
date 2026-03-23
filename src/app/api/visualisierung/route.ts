@@ -96,6 +96,94 @@ async function getWidmungAmPunkt(lat: number, lng: number) {
   }
 }
 
+// ─── BEV Kataster (DKM — Digitale Katastralmappe, täglich aktualisiert) ──────
+// Flow: BEV WMS GetFeatureInfo → inspireId → parse KG/GNr → BEV gst API
+// Datenquelle: BEV (Bundesamt für Eich- und Vermessungswesen), open data
+
+interface KatasterResult {
+  kg: string
+  gnr: string
+  ez?: string
+  grundstueck_m2: number        // Summe aller Nutzungsflächen
+  breite_m: number              // Bounding-Box Breite (physikalisch)
+  tiefe_m: number               // Bounding-Box Tiefe
+  parcel_polygon: [number, number][]  // [lng, lat] Koordinaten
+}
+
+async function getKatasterParcel(lat: number, lng: number): Promise<KatasterResult | null> {
+  try {
+    // 1. BEV WMS GetFeatureInfo — EPSG:4326 Achsenreihenfolge: LAT,LNG (WMS 1.3.0!)
+    const delta = 0.0008
+    const bbox = `${lat - delta},${lng - delta},${lat + delta},${lng + delta}`
+    const wmsUrl = `https://data.bev.gv.at/geoserver/INSdataCP/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo&LAYERS=CP_CadastralParcel&QUERY_LAYERS=CP_CadastralParcel&INFO_FORMAT=application/json&BBOX=${bbox}&CRS=EPSG:4326&WIDTH=400&HEIGHT=400&I=200&J=200&FEATURE_COUNT=5`
+
+    const wmsRes = await fetch(wmsUrl, { signal: AbortSignal.timeout(6000) })
+    if (!wmsRes.ok) return null
+    const wmsData = await wmsRes.json()
+    const features = wmsData?.features ?? []
+    if (features.length === 0) return null
+
+    // Kleinstes Feature = spezifischste Parzelle am Abfragepunkt
+    const feat = features[0]
+    const inspireId: string = feat.properties?.inspireId ?? ''
+
+    // 2. inspireId parsen: AT.0002.I.6.CP.{KG5}{GNR}[#{N}]
+    const cpMatch = inspireId.match(/CP\.(\d{5})(\d+)(?:#\d+)?$/)
+    if (!cpMatch) return null
+
+    const kg = cpMatch[1]
+    const gnr = cpMatch[2].replace(/^0+/, '') || '0'
+
+    // 3. BEV gst API — exakte Parzellengeometrie + Fläche
+    const gstUrl = `https://kataster.bev.gv.at/at.gv.bev.kataster/api/gst/${kg}/${gnr}/`
+    const gstRes = await fetch(gstUrl, {
+      headers: { 'User-Agent': 'bureau-gala-planung-tool/1.0' },
+      signal: AbortSignal.timeout(6000),
+    })
+    if (!gstRes.ok) return null
+    const gst = await gstRes.json()
+
+    const props = gst.properties ?? {}
+    const geom = gst.geometry ?? {}
+
+    // Fläche aus Nutzungen summieren
+    const nutzungen: Array<{ fl: number }> = props.nutzungen ?? []
+    const grundstueck_m2 = nutzungen.reduce((s, n) => s + (n.fl ?? 0), 0)
+
+    // Polygon-Koordinaten (GeoJSON: [lng, lat])
+    let coords: [number, number][] = []
+    if (geom.type === 'Polygon') {
+      coords = geom.coordinates?.[0] ?? []
+    } else if (geom.type === 'MultiPolygon') {
+      coords = geom.coordinates?.[0]?.[0] ?? []
+    }
+
+    if (coords.length === 0) return null
+
+    // Bounding Box → physikalische Maße
+    const lngs = coords.map((c: [number, number]) => c[0])
+    const lats = coords.map((c: [number, number]) => c[1])
+    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs)
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats)
+    const cosLat = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180)
+    const breite_m = Math.round((maxLng - minLng) * 111320 * cosLat * 10) / 10
+    const tiefe_m = Math.round((maxLat - minLat) * 111320 * 10) / 10
+
+    return {
+      kg,
+      gnr,
+      ez: props.ez ? String(props.ez) : undefined,
+      grundstueck_m2: grundstueck_m2 || Math.round(breite_m * tiefe_m),
+      breite_m: breite_m || 20,
+      tiefe_m: tiefe_m || 20,
+      parcel_polygon: coords,
+    }
+  } catch (e) {
+    console.error('[visualisierung/kataster]', e)
+    return null
+  }
+}
+
 // ─── Plandokument-DB (pe-tool petool DB) ─────────────────────────────────────
 // Tabellen: plandok_areas (bbox), plandok_regeln (bauweise, bauklasse, …)
 // PLANDOK_DB_URL = postgresql://peuser:pw@pe-postgres:5432/petool
@@ -188,7 +276,7 @@ interface BauParams {
   bebauungsweise_quelle?: string
 }
 
-function berechneBoWien(p: BauParams): BauParam & { bebauungsweise_quelle: string } {
+function berechneBoWien(p: BauParams): BauParam & { bebauungsweise_quelle: string; kg?: string; gnr?: string; ez?: string; parcel_polygon?: [number, number][] } {
   const {
     bauklasse, bebauungsweise,
     gebaeudehoehe_override, bebauungsgrad_override,
@@ -319,6 +407,11 @@ function berechneBoWien(p: BauParams): BauParam & { bebauungsweise_quelle: strin
     stellplaetze_pflicht: stellplaetze,
     hinweise,
     optimierungstipps,
+    // Kataster-Felder (werden ggf. vom Aufrufer überschrieben)
+    kg: undefined,
+    gnr: undefined,
+    ez: undefined,
+    parcel_polygon: undefined,
   }
 }
 
@@ -382,27 +475,34 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Adresse ist erforderlich.' }, { status: 400 })
   }
 
-  // 1. Geocoding
-  const coords = await geocodeAdresse(adresse)
+  // 1. Geocoding + BEV Kataster (parallel)
+  const [coords, kataster] = await Promise.all([
+    geocodeAdresse(adresse),
+    null as null,  // Platzhalter, Kataster nach Geocoding
+  ])
+
   if (!coords) {
     return Response.json({
       error: 'Adresse konnte nicht aufgelöst werden. Bitte eine Wiener Adresse mit Hausnummer und Bezirk eingeben (z. B. „Mariahilfer Straße 100, 1060 Wien").',
     }, { status: 404 })
   }
 
-  // 2. Flächenwidmungsplan (Wien WFS)
-  let widmungData: Awaited<ReturnType<typeof getWidmungAmPunkt>> = null
-  try {
-    widmungData = await getWidmungAmPunkt(coords.lat, coords.lng)
-  } catch (e) {
-    console.error('[visualisierung/wfs]', e)
-  }
+  // 2. BEV Kataster + Wien WFS + Plandokument-DB (parallel)
+  const [katasterResult, widmungData, plandok] = await Promise.all([
+    getKatasterParcel(coords.lat, coords.lng),
+    getWidmungAmPunkt(coords.lat, coords.lng).catch(() => null),
+    queryPlandokument(coords.lat, coords.lng).catch(() => null),
+  ])
 
-  // 3. Plandokument-DB (petool DB, plandok_areas/plandok_regeln)
-  let plandok: PlandokResult | null = null
-  try {
-    plandok = await queryPlandokument(coords.lat, coords.lng)
-  } catch { /* optional */ }
+  // ─── Grundstücksmaße: Kataster hat Vorrang vor Formular-Input ───────────────
+
+  // Kataster liefert exakte Fläche + Geometrie → Vorrang vor manueller Eingabe
+  const grundstueck_m2 = katasterResult?.grundstueck_m2
+    || parseFloat(String(flaeche_input)) || 800
+  const breite_m_final = katasterResult?.breite_m
+    || parseFloat(String(breite_input)) || undefined
+  const tiefe_m_final = katasterResult?.tiefe_m
+    || parseFloat(String(tiefe_input)) || undefined
 
   // ─── Widmungsparameter auflösen ──────────────────────────────────────────
 
@@ -441,9 +541,9 @@ export async function POST(req: Request) {
       : bebauungsweise || 'nicht bestimmt')
 
   const result = berechneBoWien({
-    grundstueck_m2: parseFloat(String(flaeche_input)) || 800,
-    breite_m: parseFloat(String(breite_input)) || undefined,
-    tiefe_m: parseFloat(String(tiefe_input)) || undefined,
+    grundstueck_m2,
+    breite_m: breite_m_final,
+    tiefe_m: tiefe_m_final,
     bauklasse,
     bebauungsweise,
     gebaeudehoehe_override: plandok?.maxHoeheM ?? undefined,
@@ -460,6 +560,14 @@ export async function POST(req: Request) {
     bebauungsweise_text,
     bebauungsweise_quelle: bwQuelle,
   })
+
+  // Kataster-Felder anhängen
+  if (katasterResult) {
+    result.kg = katasterResult.kg
+    result.gnr = katasterResult.gnr
+    result.ez = katasterResult.ez
+    result.parcel_polygon = katasterResult.parcel_polygon
+  }
 
   return Response.json(result)
 }

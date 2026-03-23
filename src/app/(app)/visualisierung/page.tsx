@@ -64,6 +64,11 @@ function ResultView({ result }: { result: ResultData }) {
           </>
         ) : null}
         {result.schutzzone && <strong style={{ color: '#C62828' }}> — SCHUTZZONE</strong>}
+        {result.kg && (
+          <span style={{ marginLeft: '0.5rem', fontSize: '0.72rem', color: '#6B7ABD' }}>
+            · KG {result.kg} / GNr. {result.gnr}{result.ez ? ` / EZ ${result.ez}` : ''} (BEV Kataster)
+          </span>
+        )}
       </div>
 
       {/* Kennwerte */}
@@ -90,6 +95,10 @@ function ResultView({ result }: { result: ResultData }) {
           { label: 'Bauwich seitl.', value: `${result.bauwich_seitlich_m} m` },
           { label: 'Bauwich vorne', value: `${result.bauwich_vorne_m} m` },
           { label: 'Stellplätze §50', value: `${result.stellplaetze_pflicht} SP` },
+          ...(result.kg ? [
+            { label: 'KG-Nr. (BEV)', value: result.kg },
+            { label: 'Grundst.-Nr.', value: result.gnr ?? '—' },
+          ] : []),
         ].map(k => (
           <div key={k.label} style={{ background: 'var(--surface)', padding: '0.65rem 0.9rem' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.06em', marginBottom: '0.15rem' }}>

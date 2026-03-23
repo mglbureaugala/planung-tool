@@ -88,12 +88,53 @@ export function generateLageplan(p: BauParam): string {
 
   const aW = W - PAD_L - PAD_R
   const aH = H - PAD_T - PAD_B
-  const scale = Math.min(aW / p.breite_m, aH / p.tiefe_m) * 0.88
+  const lx = W - PAD_R + 14  // Legende x
 
-  const pW = p.breite_m * scale
-  const pH = p.tiefe_m * scale
-  const ox = PAD_L + (aW - pW) / 2
-  const oy = PAD_T + (aH - pH) / 2
+  // ── Kataster-Polygon vorhanden: echte Parzellengeometrie verwenden ──────────
+  const poly = p.parcel_polygon
+  const hasPolygon = poly && poly.length >= 3
+
+  let scale: number
+  let ox: number, oy: number, pW: number, pH: number
+  let svgPolygon = ''          // <polygon> für die echte Parzelle
+  let parzellLabel = ''        // Flächenangabe aus Kataster
+
+  if (hasPolygon) {
+    // Bounding Box in WGS84
+    const lngs = poly.map(c => c[0])
+    const lats = poly.map(c => c[1])
+    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs)
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats)
+
+    // Physikalische Maße in Metern (Wien ≈ 48°N: cos(48°) ≈ 0.669)
+    const physW = (maxLng - minLng) * 111320 * Math.cos(((minLat + maxLat) / 2) * Math.PI / 180)
+    const physH = (maxLat - minLat) * 111320
+
+    scale = Math.min(aW / physW, aH / physH) * 0.88
+    pW = physW * scale
+    pH = physH * scale
+    ox = PAD_L + (aW - pW) / 2
+    oy = PAD_T + (aH - pH) / 2
+
+    // Polygon-Punkte in SVG-Koordinaten transformieren
+    const pts = poly.map(([lng, lat]) => {
+      const x = ox + (lng - minLng) * 111320 * Math.cos(((minLat + maxLat) / 2) * Math.PI / 180) * scale
+      const y = oy + (maxLat - lat) * 111320 * scale
+      return `${r(x)},${r(y)}`
+    }).join(' ')
+
+    svgPolygon = `<polygon points="${pts}" fill="${BEIGE}" stroke="${GRAY}" stroke-width="1.6" stroke-dasharray="6,3"/>`
+    parzellLabel = p.kg && p.gnr ? `KG ${p.kg} / GNr. ${p.gnr}` : `${p.grundstueck_m2} m²`
+
+  } else {
+    // Fallback: Rechteck aus Breite/Tiefe
+    scale = Math.min(aW / p.breite_m, aH / p.tiefe_m) * 0.88
+    pW = p.breite_m * scale
+    pH = p.tiefe_m * scale
+    ox = PAD_L + (aW - pW) / 2
+    oy = PAD_T + (aH - pH) / 2
+    parzellLabel = `${p.grundstueck_m2} m²`
+  }
 
   const sv = p.bauwich_vorne_m * scale
   const sh = p.bauwich_hinten_m * scale
@@ -104,8 +145,6 @@ export function generateLageplan(p: BauParam): string {
   const bkW = Math.max(0, pW - 2 * ss)
   const bkH = Math.max(0, pH - sv - sh)
 
-  const lx = W - PAD_R + 14  // Legende x
-
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="${FONT}">
   <defs>
     <pattern id="lp-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -115,6 +154,14 @@ export function generateLageplan(p: BauParam): string {
       <line x1="0" y1="0" x2="20" y2="0" stroke="#E8E6E0" stroke-width="0.4"/>
       <line x1="0" y1="0" x2="0" y2="20" stroke="#E8E6E0" stroke-width="0.4"/>
     </pattern>
+    ${hasPolygon ? `<clipPath id="lp-clip"><polygon points="${poly.map(([lng, lat]) => {
+      const lngs2 = poly.map(c => c[0]); const lats2 = poly.map(c => c[1])
+      const minLng2 = Math.min(...lngs2), maxLng2 = Math.max(...lngs2)
+      const minLat2 = Math.min(...lats2), maxLat2 = Math.max(...lats2)
+      const x = ox + (lng - minLng2) * 111320 * Math.cos(((minLat2 + maxLat2) / 2) * Math.PI / 180) * scale
+      const y = oy + (maxLat2 - lat) * 111320 * scale
+      return `${r(x)},${r(y)}`
+    }).join(' ')}" /></clipPath>` : ''}
   </defs>
 
   <!-- Hintergrund & Raster -->
@@ -122,22 +169,21 @@ export function generateLageplan(p: BauParam): string {
   <rect x="${PAD_L}" y="${PAD_T}" width="${aW}" height="${aH}" fill="url(#lp-grid)"/>
 
   <!-- Titel -->
-  <text x="${PAD_L}" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}" text-transform="uppercase">LAGEPLAN — MAXIMALE BEBAUUNG</text>
+  <text x="${PAD_L}" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}">LAGEPLAN — MAXIMALE BEBAUUNG${hasPolygon ? ' (BEV KATASTER)' : ''}</text>
   <line x1="${PAD_L}" y1="28" x2="${W - PAD_R}" y2="28" stroke="${BORDER}" stroke-width="0.5"/>
 
   <!-- Grundfläche Grundstück -->
-  ${rect(ox, oy, pW, pH, `fill="${BEIGE}" stroke="none"`)}
+  ${hasPolygon ? svgPolygon : rect(ox, oy, pW, pH, `fill="${BEIGE}" stroke="${GRAY}" stroke-width="1.6" stroke-dasharray="6,3"`)}
 
-  <!-- Bauwich-Zonen nur schraffieren wo wirklich ein Bauwich vorhanden -->
+  <!-- Bauwich-Zonen (schraffiert) — innerhalb Grundstück geclippt -->
+  ${hasPolygon ? `<g clip-path="url(#lp-clip)">` : ''}
   ${sv > 0 ? rect(ox, oy, pW, sv, `fill="url(#lp-hatch)" stroke="none"`) : ''}
   ${sh > 0 ? rect(ox, oy + pH - sh, pW, sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
   ${ss > 0 ? rect(ox, oy + sv, ss, pH - sv - sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
   ${ss > 0 ? rect(ox + pW - ss, oy + sv, ss, pH - sv - sh, `fill="url(#lp-hatch)" stroke="none"`) : ''}
+  ${hasPolygon ? `</g>` : ''}
 
-  <!-- Grundstücksgrenze -->
-  ${rect(ox, oy, pW, pH, `fill="none" stroke="${GRAY}" stroke-width="1.6" stroke-dasharray="6,3"`)}
-
-  <!-- Baukörper (keine Transparenz — überdeckt keine Schraffur mehr) -->
+  <!-- Baukörper -->
   ${bkW > 0 && bkH > 0 ? rect(bkX, bkY, bkW, bkH, `fill="${IKB}" fill-opacity="0.28" stroke="${IKB}" stroke-width="2"`) : ''}
 
   <!-- Bemaßung: Breite -->
@@ -159,7 +205,7 @@ export function generateLageplan(p: BauParam): string {
   <!-- Legende -->
   <line x1="${lx - 4}" y1="${PAD_T}" x2="${lx - 4}" y2="${H - 30}" stroke="${BORDER}" stroke-width="0.5"/>
   ${text(lx, PAD_T + 12, 'LEGENDE', `font-size="7" fill="${GRAY_LT}" letter-spacing="1.5" font-family="${FONT}"`)}
-  ${legendRow(lx, PAD_T + 28, GRAY, BEIGE, '6,3', 'Grundstücksgrenze')}
+  ${legendRow(lx, PAD_T + 28, GRAY, BEIGE, '6,3', hasPolygon ? 'Katastergrenze (BEV)' : 'Grundstücksgrenze')}
   ${legendRow(lx, PAD_T + 44, HATCH_C, 'url(#lp-hatch)', '', 'Bauwich §78 BO Wien')}
   ${legendRow(lx, PAD_T + 60, IKB, `${IKB}30`, '', 'max. Baukörper')}
 
@@ -173,12 +219,14 @@ export function generateLageplan(p: BauParam): string {
   ${text(lx, PAD_T + 144, `beb. Fläche: ${p.bebaute_flaeche_max_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
   ${text(lx, PAD_T + 156, `BGF: ${p.bgf_gesamt_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
   ${text(lx, PAD_T + 168, `NGF: ${p.ngf_geschaetzt_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${p.kg ? text(lx, PAD_T + 184, `KG ${p.kg} / GNr ${p.gnr}`, `font-size="7" fill="${GRAY_LT}" font-family="${FONT}"`) : ''}
 
   <!-- Maßstab -->
   ${text(ox, H - 12, `Maßstab ~1:${Math.round(1 / scale * 100 / 100) * 100 || 500}`, `font-size="7" fill="${GRAY_LT}" font-family="${FONT}"`)}
 
-  <!-- Grundstücksfläche Label -->
-  ${text(ox + pW / 2, oy + pH / 2 + 4, `${p.grundstueck_m2} m²`, `text-anchor="middle" font-size="9" fill="${GRAY_LT}" font-family="${FONT}"`)}
+  <!-- Fläche / Kataster-Label -->
+  ${text(ox + pW / 2, oy + pH / 2 + 4, parzellLabel, `text-anchor="middle" font-size="9" fill="${GRAY_LT}" font-family="${FONT}"`)}
+  ${p.grundstueck_m2 > 0 && hasPolygon ? text(ox + pW / 2, oy + pH / 2 + 16, `${p.grundstueck_m2} m²`, `text-anchor="middle" font-size="8" fill="${GRAY_LT}" font-family="${FONT}"`) : ''}
 </svg>`
 }
 
