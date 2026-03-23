@@ -9,7 +9,7 @@ import {
   WIDMUNG_TEXT, BEBAUUNGSWEISE_TEXT, isBauland,
 } from '@/lib/wbo-engine'
 
-// ─── Geocoding ───────────────────────────────────────────────────────────────
+// ─── Geocoding ────────────────────────────────────────────────────────────────
 
 async function geocodeAdresse(adresse: string): Promise<{
   lat: number; lng: number; adresse_aufgeloest: string
@@ -87,29 +87,26 @@ async function getWidmungAmPunkt(lat: number, lng: number) {
 
   const p = features[0].properties
 
-  // Wien OGD GENFLWIDMUNGOGD liefert Bebauungsweise in BEBAUUNGSWEISE-Feld,
-  // fallback auf WIDMUNG_DETAIL (ältere API-Versionen / manche Layer-Varianten)
-  const bebauungsweise_raw =
-    (p.BEBAUUNGSWEISE ? String(p.BEBAUUNGSWEISE).trim() : null) ||
-    (p.WIDMUNG_DETAIL ? String(p.WIDMUNG_DETAIL).trim() : null) ||
-    null
-
   return {
     widmung: String(p.WIDMUNG ?? '').trim().toUpperCase(),
-    bebauungsweise_raw,
+    // WIDMUNG_DETAIL ist im Wien OGD GENFLWIDMUNGOGD-Layer immer null —
+    // Bebauungsweise ist nur über Plandokumente (MA 21) verfügbar.
     widmung_txt: String(p.WIDMUNG_TXT ?? p.WIDMUNGSKLASSE_TXT ?? p.BEZEICHNUNG ?? '').trim(),
-    bezirk: p.BEZIRK ? parseInt(String(p.BEZIRK)) : (p.BEZIRKSNUMMER ? parseInt(String(p.BEZIRKSNUMMER)) : undefined),
+    bezirk: p.BEZIRK ? parseInt(String(p.BEZIRK)) : undefined,
   }
 }
 
-// ─── Plandokument-Datenbank (optional, nur wenn PLANDOK_DB_URL gesetzt) ──────
+// ─── Plandokument-DB (pe-tool petool DB) ─────────────────────────────────────
+// Tabellen: plandok_areas (bbox), plandok_regeln (bauweise, bauklasse, …)
+// PLANDOK_DB_URL = postgresql://peuser:pw@pe-postgres:5432/petool
 
 let _plandokPool: Pool | null = null
 function getPlandokPool(): Pool | null {
-  if (!process.env.PLANDOK_DB_URL) return null
+  const url = process.env.PLANDOK_DB_URL
+  if (!url) return null
   if (!_plandokPool) {
     _plandokPool = new Pool({
-      connectionString: process.env.PLANDOK_DB_URL,
+      connectionString: url,
       max: 2,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 3000,
@@ -119,16 +116,16 @@ function getPlandokPool(): Pool | null {
 }
 
 interface PlandokResult {
-  plandok_nr: string
-  bezeichnung: string | null
-  plan_url: string | null
-  text_url: string | null
+  bezug: string
+  bauweise: string | null
   bauklasse: string | null
-  bebauungsweise: string | null
-  max_hoehe_m: number | null
-  schutzzone: boolean | null
-  besondere_bestimmungen: string[] | null
-  baufluchtlinien: boolean | null
+  widmung: string | null
+  maxHoeheM: number | null
+  setbackFrontM: number | null
+  setbackSideM: number | null
+  setbackRearM: number | null
+  pdfUrl: string | null
+  anmerkung: string | null
 }
 
 async function queryPlandokument(lat: number, lng: number): Promise<PlandokResult | null> {
@@ -136,47 +133,192 @@ async function queryPlandokument(lat: number, lng: number): Promise<PlandokResul
   if (!pool) return null
 
   try {
-    const rows = await pool.query<{
-      plandok_nummer: string; bezeichnung: string | null
-      plan_url: string | null; text_url: string | null
-      bauklasse: string | null; bebauungsweise: string | null
-      max_hoehe_m: string | null; schutzzone: boolean | null
-      besondere_bestimmungen: string[] | null; baufluchtlinien: boolean | null
-    }>(`
+    const rows = await pool.query<PlandokResult>(`
       SELECT
-        p.plandok_nummer, p.bezeichnung,
-        pl.source_url  AS plan_url,
-        t.source_url   AS text_url,
-        pa.bauklasse, pa.bebauungsweise, pa.max_hoehe_m, pa.schutzzone,
-        pa.besondere_bestimmungen, pa.baufluchtlinien,
-        (pb.bbox_max_lon - pb.bbox_min_lon) * (pb.bbox_max_lat - pb.bbox_min_lat) AS bbox_area
-      FROM plandok_bbox pb
-      JOIN plandokumente p ON p.plandok_nummer = pb.plandok_nummer
-      LEFT JOIN plandokument_pdfs t  ON t.plandok_nummer = p.plandok_nummer AND t.pdf_typ = 'text'
-      LEFT JOIN plandokument_pdfs pl ON pl.plandok_nummer = p.plandok_nummer AND pl.pdf_typ = 'plan'
-      LEFT JOIN plandok_analyse pa   ON pa.plandok_nummer = p.plandok_nummer
-      WHERE $1::numeric BETWEEN pb.bbox_min_lon AND pb.bbox_max_lon
-        AND $2::numeric BETWEEN pb.bbox_min_lat AND pb.bbox_max_lat
-      ORDER BY bbox_area ASC LIMIT 1
+        a.bezug,
+        r.bauweise,
+        r.bauklasse,
+        r.widmung,
+        r."maxHoeheM",
+        r."setbackFrontM",
+        r."setbackSideM",
+        r."setbackRearM",
+        r."pdfUrl",
+        r.anmerkung
+      FROM plandok_areas a
+      JOIN plandok_regeln r ON r.bezug = a.bezug
+      WHERE $1::numeric BETWEEN a."bboxMinLng" AND a."bboxMaxLng"
+        AND $2::numeric BETWEEN a."bboxMinLat" AND a."bboxMaxLat"
+      ORDER BY (a."bboxMaxLng" - a."bboxMinLng") * (a."bboxMaxLat" - a."bboxMinLat") ASC
+      LIMIT 1
     `, [lng, lat])
 
-    if (rows.rows.length === 0) return null
-    const r = rows.rows[0]
-    return {
-      plandok_nr: r.plandok_nummer,
-      bezeichnung: r.bezeichnung,
-      plan_url: r.plan_url,
-      text_url: r.text_url,
-      bauklasse: r.bauklasse,
-      bebauungsweise: r.bebauungsweise,
-      max_hoehe_m: r.max_hoehe_m ? parseFloat(r.max_hoehe_m) : null,
-      schutzzone: r.schutzzone,
-      besondere_bestimmungen: r.besondere_bestimmungen,
-      baufluchtlinien: r.baufluchtlinien,
-    }
+    return rows.rows[0] ?? null
   } catch (e) {
     console.error('[visualisierung/plandok]', e)
     return null
+  }
+}
+
+// ─── BO Wien Berechnung ───────────────────────────────────────────────────────
+
+interface BauParams {
+  // Grundstück
+  grundstueck_m2: number
+  breite_m?: number
+  tiefe_m?: number
+  // Widmung
+  bauklasse: string
+  bebauungsweise: string
+  // Optionale Overrides
+  gebaeudehoehe_override?: number
+  bebauungsgrad_override?: number
+  bauwich_vorne_override?: number
+  bauwich_seitlich_override?: number
+  bauwich_hinten_override?: number
+  // Anzeige
+  adresse?: string
+  bezirk?: number
+  widmung?: string
+  widmung_text?: string
+  plandokument_nr?: string
+  plandokument_url?: string
+  schutzzone?: boolean
+  bebauungsweise_text?: string
+  bebauungsweise_quelle?: string
+}
+
+function berechneBoWien(p: BauParams): BauParam & { bebauungsweise_quelle: string } {
+  const {
+    bauklasse, bebauungsweise,
+    gebaeudehoehe_override, bebauungsgrad_override,
+    bauwich_vorne_override, bauwich_seitlich_override, bauwich_hinten_override,
+  } = p
+
+  // Gebäudehöhe §75/76 BO Wien
+  const gebaeudehoehe = gebaeudehoehe_override ?? BAUKLASSE_GEBAEUDEHOEHE[bauklasse] ?? 7.5
+  const maxGeschosse = BAUKLASSE_GESCHOSSE[bauklasse] ?? 2
+  const dachform: 'sattel' | 'flach' = (bauklasse === 'I' || bauklasse === 'II') ? 'sattel' : 'flach'
+
+  // Bebauungsweise normalisieren
+  const bwNorm = bebauungsweise.toLowerCase()
+  const isGeschlossen = bwNorm === 'g' || bwNorm.startsWith('geschlossen')
+    || bwNorm === 'gr' || bwNorm.startsWith('gemischt')
+  const isGekuppelt = bwNorm === 'gk' || bwNorm.startsWith('gekuppelt')
+
+  // Bauwich §78 BO Wien
+  let bauwich_s: number
+  let bauwich_v: number
+  let bauwich_h: number
+
+  if (bauwich_seitlich_override !== undefined || bauwich_vorne_override !== undefined || bauwich_hinten_override !== undefined) {
+    // Vollständiger Plandokument-Override
+    bauwich_s = bauwich_seitlich_override ?? 0
+    bauwich_v = bauwich_vorne_override ?? 0
+    bauwich_h = bauwich_hinten_override ?? 0
+  } else if (isGeschlossen) {
+    // §78 Abs. 1: Kein Bauwich bei geschlossener Bebauungsweise
+    bauwich_s = 0; bauwich_v = 0; bauwich_h = 0
+  } else if (isGekuppelt) {
+    // Gekuppelt: einseitig an Grundgrenze, andere Seite wie offen
+    const bs = minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o')
+    bauwich_s = Math.round(bs / 2 * 10) / 10
+    bauwich_v = bauwich_vorne_override ?? 3.0
+    bauwich_h = bauwich_hinten_override ?? 3.0
+  } else {
+    // Offen §78 Abs. 2: seitlicher Bauwich = max(h/2, Mindestbauwich)
+    bauwich_s = Math.round(minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o') * 10) / 10
+    bauwich_v = bauwich_vorne_override ?? 3.0
+    bauwich_h = bauwich_hinten_override ?? 3.0
+  }
+
+  // Grundstücksmaße
+  const flaeche = p.grundstueck_m2
+  let breite = p.breite_m ?? 0
+  let tiefe = p.tiefe_m ?? 0
+
+  if (breite > 0 && tiefe === 0) tiefe = flaeche / breite
+  else if (tiefe > 0 && breite === 0) breite = flaeche / tiefe
+  else if (breite === 0 && tiefe === 0) {
+    breite = Math.sqrt(flaeche / 1.6) // Wiener Straßenparzellen-Verhältnis 1:1.6
+    tiefe = flaeche / breite
+  }
+  breite = Math.round(breite * 10) / 10
+  tiefe = Math.round(tiefe * 10) / 10
+
+  // Baukörper
+  const bk_breite = Math.max(0, Math.round((breite - 2 * bauwich_s) * 10) / 10)
+  const bk_tiefe = Math.max(0, Math.round((tiefe - bauwich_v - bauwich_h) * 10) / 10)
+
+  // Bebauungsdichte §79 BO Wien
+  const bebauungsgrad = bebauungsgrad_override ?? maxBebauungsgrad(bauklasse, bebauungsweise)
+  const bebaute_flaeche = Math.round(Math.min(bk_breite * bk_tiefe, flaeche * bebauungsgrad))
+  const bgf = Math.round(bebaute_flaeche * maxGeschosse * 0.95)   // 5% Konstruktion
+  const ngf = Math.round(bgf * 0.78)                               // NGF ~78% von BGF (Wohnen)
+  const stellplaetze = Math.ceil(ngf / 100)                        // §50 BO Wien
+
+  const bebauungsweise_text = p.bebauungsweise_text
+    ?? BEBAUUNGSWEISE_TEXT[bebauungsweise]
+    ?? bebauungsweise
+
+  // Hinweise
+  const hinweise: string[] = []
+
+  if (p.bebauungsweise_quelle?.startsWith('Bezirk-Richtwert')) {
+    hinweise.push(`Bebauungsweise: ${bebauungsweise_text} — Schätzwert (${p.bebauungsweise_quelle}). Wien OGD enthält kein Bebauungsweise-Feld. Für Genehmigungsplanung Plandokument MA 21 prüfen (www.wien.gv.at/bebauungsplaene).`)
+  } else if (p.bebauungsweise_quelle && p.bebauungsweise_quelle !== 'manuell') {
+    hinweise.push(`Bebauungsweise: ${bebauungsweise_text} — Quelle: ${p.bebauungsweise_quelle}.`)
+  }
+
+  if (p.schutzzone) hinweise.push('SCHUTZZONE §2 Z 52 BO Wien: Erhaltung der Struktur und des äußeren Erscheinungsbildes gesetzlich vorgeschrieben. Sanierung statt Abriss.')
+  if (gebaeudehoehe_override) hinweise.push(`Gebäudehöhe ${gebaeudehoehe_override} m aus Bebauungsplan — abweichend vom BO Wien-Standardwert für BKl. ${bauklasse} (${BAUKLASSE_GEBAEUDEHOEHE[bauklasse]} m).`)
+  if (bebauungsgrad_override) hinweise.push(`Bebauungsgrad ${Math.round(bebauungsgrad_override * 100)} % aus Bebauungsplan — abweichend vom §79-Standardwert.`)
+  if (bauwich_vorne_override || bauwich_seitlich_override || bauwich_hinten_override) {
+    hinweise.push('Bauwich-Werte aus Plandokument übernommen — Baufluchtlinien wurden berücksichtigt.')
+  }
+  if (!p.widmung || p.widmung === '—') {
+    hinweise.push('Keine Widmungsabfrage — Werte basieren ausschließlich auf manuellen Eingaben. Flächenwidmungsplan unter www.wien.gv.at/flaechenwidmung prüfen.')
+  }
+
+  const optimierungstipps: string[] = [
+    ...(maxGeschosse >= 2 ? ['Dachgeschossausbau §81 BO Wien: erhöht NGF um ca. 25–40 % ohne Anrechnung auf Bebauungsgrad (kein Bauland-Mehrbedarf).'] : []),
+    'Technische Aufbauten (Lift, Lüftung) bis max. 3,0 m über Gebäudeabschluss zulässig (§81 Abs. 6).',
+    ...(!isGeschlossen ? ['§69 BO Wien: Abweichung vom Bebauungsplan auf Antrag möglich, wenn kein öffentliches Interesse entgegensteht und das Ortsbild nicht beeinträchtigt wird.'] : []),
+    ...(bauklasse === 'I' || bauklasse === 'II' ? ['Keller §63: Bei Hanglage als Vollgeschoss möglich — erhöht Nutzfläche ohne Anrechnung auf Gebäudehöhe.'] : []),
+  ]
+
+  return {
+    adresse: p.adresse ?? 'Manuelle Eingabe',
+    lat: 0, lng: 0,
+    grundstueck_m2: flaeche,
+    breite_m: breite,
+    tiefe_m: tiefe,
+    bezirk: p.bezirk,
+    widmung: p.widmung ?? '—',
+    widmung_text: p.widmung_text ?? '—',
+    bebaubar: true,
+    bauklasse,
+    bebauungsweise,
+    bebauungsweise_text,
+    bebauungsweise_quelle: p.bebauungsweise_quelle ?? 'manuell',
+    plandokument_nr: p.plandokument_nr,
+    plandokument_url: p.plandokument_url,
+    schutzzone: p.schutzzone ?? false,
+    gebaeudehoehe_max_m: gebaeudehoehe,
+    max_geschosse: maxGeschosse,
+    dachform,
+    bauwich_seitlich_m: bauwich_s,
+    bauwich_vorne_m: bauwich_v,
+    bauwich_hinten_m: bauwich_h,
+    baukörper_breite_m: bk_breite,
+    baukörper_tiefe_m: bk_tiefe,
+    bebauungsgrad,
+    bebaute_flaeche_max_m2: bebaute_flaeche,
+    bgf_gesamt_m2: bgf,
+    ngf_geschaetzt_m2: ngf,
+    stellplaetze_pflicht: stellplaetze,
+    hinweise,
+    optimierungstipps,
   }
 }
 
@@ -184,12 +326,56 @@ async function queryPlandokument(lat: number, lng: number): Promise<PlandokResul
 
 export async function POST(req: Request) {
   const body = await req.json()
+  const { modus } = body
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // WEG 1: MANUELLE EINGABE — alle Parameter bekannt, keine externen Abfragen
+  // ══════════════════════════════════════════════════════════════════════════
+  if (modus === 'manuell') {
+    const {
+      grundstueck_m2, breite_m, tiefe_m,
+      bauklasse, bebauungsweise,
+      gebaeudehoehe_override, bebauungsgrad_override,
+      bauwich_vorne_override, bauwich_seitlich_override, bauwich_hinten_override,
+      bezeichnung, plandokument_nr, schutzzone,
+    } = body
+
+    if (!grundstueck_m2 || !bauklasse || !bebauungsweise) {
+      return Response.json({
+        error: 'Pflichtfelder: Grundstücksfläche, Bauklasse und Bebauungsweise sind erforderlich.',
+      }, { status: 400 })
+    }
+
+    const result = berechneBoWien({
+      grundstueck_m2: parseFloat(grundstueck_m2),
+      breite_m: breite_m ? parseFloat(breite_m) : undefined,
+      tiefe_m: tiefe_m ? parseFloat(tiefe_m) : undefined,
+      bauklasse,
+      bebauungsweise,
+      gebaeudehoehe_override: gebaeudehoehe_override ?? undefined,
+      bebauungsgrad_override: bebauungsgrad_override ?? undefined,
+      bauwich_vorne_override: bauwich_vorne_override ?? undefined,
+      bauwich_seitlich_override: bauwich_seitlich_override ?? undefined,
+      bauwich_hinten_override: bauwich_hinten_override ?? undefined,
+      adresse: bezeichnung || undefined,
+      plandokument_nr: plandokument_nr || undefined,
+      schutzzone: schutzzone ?? false,
+      bebauungsweise_quelle: 'manuell',
+    })
+
+    return Response.json(result)
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // WEG 2: ADRESSABFRAGE — Geocoding + WFS + Plandokument-DB
+  // ══════════════════════════════════════════════════════════════════════════
+
   const {
     adresse,
     grundstueck_m2: flaeche_input,
     breite_m: breite_input,
     tiefe_m: tiefe_input,
-    bebauungsweise_override,  // Manuelle Überschreibung aus dem Formular
+    bebauungsweise_override,
   } = body
 
   if (!adresse?.trim()) {
@@ -212,207 +398,68 @@ export async function POST(req: Request) {
     console.error('[visualisierung/wfs]', e)
   }
 
-  // 3. Plandokument (optional)
+  // 3. Plandokument-DB (petool DB, plandok_areas/plandok_regeln)
   let plandok: PlandokResult | null = null
   try {
     plandok = await queryPlandokument(coords.lat, coords.lng)
   } catch { /* optional */ }
 
-  // ─── Widmungsparameter auflösen ───────────────────────────────────────────
+  // ─── Widmungsparameter auflösen ──────────────────────────────────────────
 
   const widmungCode = widmungData?.widmung ?? ''
   const widmungText = WIDMUNG_TEXT[widmungCode] ?? widmungData?.widmung_txt ?? (widmungCode || 'Unbekannt')
 
   if (widmungCode && !isBauland(widmungCode)) {
     return Response.json({
-      error: `Das Grundstück ist NICHT bebaubar — Widmung: ${widmungText} (${widmungCode}). Bitte eine bebaubare Fläche (Wohngebiet, Gemischtes Baugebiet, …) wählen.`,
-      widmung_code: widmungCode,
-      widmung_text: widmungText,
-      adresse_aufgeloest: coords.adresse_aufgeloest,
-      lat: coords.lat,
-      lng: coords.lng,
+      error: `Das Grundstück ist NICHT bebaubar — Widmung: ${widmungText} (${widmungCode}). Bitte eine bebaubare Fläche (Wohngebiet, Gemischtes Baugebiet …) wählen.`,
     }, { status: 422 })
   }
 
-  // Bauklasse: Plandokument (präziser) → WFS-Code-Parsing → Fallback
+  // Bauklasse: Plandokument → WFS-Code → Fallback
   const bauklasse = (
     plandok?.bauklasse?.trim().toUpperCase() ||
     bauklasseAusWidmung(widmungCode) ||
     'II'
   )
 
-  // Bebauungsweise: Formular-Override → Plandokument → WFS → Bezirk-Standardwert
-  // Quellen-Ranking: manuelle Eingabe > Bebauungsplan-Analyse > WFS > Bezirk-Heuristik
-  const bwFromSources = (bebauungsweise_override?.trim() || null)
-    || (plandok?.bebauungsweise?.trim() || null)
-    || parseBebauungsweise(widmungData?.bebauungsweise_raw)
-    || null
+  // Bebauungsweise: Formular-Override → Plandokument-DB → Bezirk-Heuristik
+  const bezirk = widmungData?.bezirk
+  const bwFromPlandok = parseBebauungsweise(plandok?.bauweise ?? null)
+  const bwBezirkDefault: string | null = bezirk != null ? (bezirk <= 9 ? 'g' : 'o') : null
 
-  // Wien GENFLWIDMUNGOGD liefert KEIN Bebauungsweise-Feld (WIDMUNG_DETAIL ist immer null).
-  // Fallback: Bezirk-Heuristik nach typischer Wiener Stadtstruktur:
-  //   Bezirk 1–9  → überwiegend geschlossene Bebauungsweise (Gründerzeit, Historismus)
-  //   Bezirk 10–23 → überwiegend offene Bebauungsweise (Wohnbauten 20./21. Jh.)
-  // Diese Heuristik trifft in > 80 % der Fälle zu; für Genehmigungsplanung
-  // ist das Plandokument (MA 21) maßgeblich.
-  const bezirkForHeuristic = widmungData?.bezirk
-  const bwBezirkDefault: string | null = bezirkForHeuristic != null
-    ? (bezirkForHeuristic <= 9 ? 'g' : 'o')
-    : null
+  const bebauungsweise = (bebauungsweise_override?.trim() || null)
+    || bwFromPlandok || bwBezirkDefault || ''
 
-  const bwRaw = bwFromSources ?? bwBezirkDefault
-  const bebauungsweise = bwRaw ?? ''
+  const bwQuelle = bebauungsweise_override ? 'manuell'
+    : bwFromPlandok ? `Plandokument ${plandok?.bezug ?? ''}`
+    : bwBezirkDefault ? `Bezirk-Richtwert (${bezirk}. Bezirk)`
+    : 'unbekannt'
 
   const bebauungsweise_text = BEBAUUNGSWEISE_TEXT[bebauungsweise]
     ?? (bebauungsweise.toLowerCase().includes('geschlossen') ? 'geschlossene Bebauungsweise'
       : bebauungsweise.toLowerCase().includes('offen') ? 'offene Bebauungsweise'
-      : bebauungsweise.toLowerCase().includes('gekuppelt') ? 'gekuppelte Bebauungsweise'
-      : bebauungsweise || 'nicht bestimmt — bitte manuell wählen')
+      : bebauungsweise || 'nicht bestimmt')
 
-  // Bebauungsweise-Quell-Transparenz
-  const bwQuelle = bebauungsweise_override ? 'manuell'
-    : plandok?.bebauungsweise ? 'Bebauungsplan'
-    : widmungData?.bebauungsweise_raw ? 'Flächenwidmungsplan'
-    : bwBezirkDefault ? `Bezirk-Richtwert (${bezirkForHeuristic}. Bezirk)`
-    : 'unbekannt'
-
-  // Gebäudehöhe: Plandokument-Analyse → WBO-Standardwert für Bauklasse
-  const gebaeudehoehe = plandok?.max_hoehe_m ?? BAUKLASSE_GEBAEUDEHOEHE[bauklasse] ?? 7.5
-  const maxGeschosse = BAUKLASSE_GESCHOSSE[bauklasse] ?? 2
-
-  // ─── Grundstücksmaße ─────────────────────────────────────────────────────
-
-  const flaeche = parseFloat(String(flaeche_input)) || 800
-  let breite = parseFloat(String(breite_input)) || 0
-  let tiefe = parseFloat(String(tiefe_input)) || 0
-
-  if (breite > 0 && tiefe === 0) tiefe = flaeche / breite
-  else if (tiefe > 0 && breite === 0) breite = flaeche / tiefe
-  else if (breite === 0 && tiefe === 0) {
-    // Typisches Wiener Straßenparzellen-Verhältnis
-    breite = Math.sqrt(flaeche / 1.6)
-    tiefe = flaeche / breite
-  }
-
-  breite = Math.round(breite * 10) / 10
-  tiefe = Math.round(tiefe * 10) / 10
-
-  // ─── Bauwich §78 WBO Wien ─────────────────────────────────────────────────
-
-  // Normalisierung für Bauwich-Berechnung
-  const bwNorm = bebauungsweise.toLowerCase()
-  const isGeschlossen = bwNorm === 'g' || bwNorm.startsWith('geschlossen')
-    || bwNorm === 'gr' || bwNorm.startsWith('gemischt')  // Gründerzeit = geschlossen an Straße
-  const isGekuppelt = bwNorm === 'gk' || bwNorm.startsWith('gekuppelt')
-  const isOffen = bwNorm === 'o' || bwNorm.startsWith('offen')
-  const isUnbekannt = !bebauungsweise
-
-  let bauwich_s: number
-  let bauwich_v: number
-  let bauwich_h: number
-
-  if (isGeschlossen) {
-    // Geschlossene / Gründerzeit-Bebauungsweise §78 Abs. 1 BO Wien:
-    // Kein seitlicher Bauwich, keine Vorgartenzone
-    // Hinterer Bauwich: 0 (Bebauungsplan kann Hofzone vorschreiben, aber kein WBO-Standard)
-    bauwich_s = 0; bauwich_v = 0; bauwich_h = 0
-  } else if (isGekuppelt) {
-    // Gekuppelte Bebauungsweise: eine Seite an Grundgrenze, andere Seite § 78
-    const bs = minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o')
-    bauwich_s = Math.round(bs / 2 * 10) / 10  // Effektiv: nur eine Seite hat Bauwich
-    bauwich_v = 3.0; bauwich_h = 3.0
-  } else if (isOffen || isUnbekannt) {
-    // Offene Bebauungsweise: seitlicher Bauwich §78 Abs. 2 BO Wien
-    bauwich_s = Math.round(minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o') * 10) / 10
-    bauwich_v = 3.0; bauwich_h = 3.0
-  } else {
-    // Sonstige / dichte Bebauungsweise
-    bauwich_s = Math.round(minSeitlicherBauwich(bauklasse, gebaeudehoehe, 'o') * 10) / 10
-    bauwich_v = 3.0; bauwich_h = 3.0
-  }
-
-  // ─── Baukörper ───────────────────────────────────────────────────────────
-
-  const bk_breite = Math.max(0, Math.round((breite - 2 * bauwich_s) * 10) / 10)
-  const bk_tiefe = Math.max(0, Math.round((tiefe - bauwich_v - bauwich_h) * 10) / 10)
-
-  // ─── Bebauungsdichte §79 WBO Wien ────────────────────────────────────────
-
-  const bebauungsgrad = maxBebauungsgrad(bauklasse, bebauungsweise)
-  const bebaute_flaeche = Math.round(Math.min(bk_breite * bk_tiefe, flaeche * bebauungsgrad))
-  const bgf = Math.round(bebaute_flaeche * maxGeschosse * 0.95)   // 5% Konstruktion
-  const ngf = Math.round(bgf * 0.78)                               // NGF-Faktor Wohnen (§79 WBO)
-
-  // Dachform: BKl. I–II typisch Satteldach; III+ Flachdach
-  const dachform: 'sattel' | 'flach' = (bauklasse === 'I' || bauklasse === 'II') ? 'sattel' : 'flach'
-
-  // Stellplatzpflicht (§50 BO Wien, vereinfacht: 1 SP je 100 m² NGF Wohnen)
-  const stellplaetze = Math.ceil(ngf / 100)
-
-  // ─── Hinweise ────────────────────────────────────────────────────────────
-
-  const hinweise: string[] = []
-  if (!widmungCode) hinweise.push('Widmungsabfrage nicht verfügbar — Parameter auf Basis eingegebener Daten berechnet. Flächenwidmungsplan unter www.wien.gv.at/flaechenwidmung/ prüfen.')
-  if (plandok) hinweise.push(`Bebauungsplan Nr. ${plandok.plandok_nr} gilt für dieses Grundstück${plandok.bezeichnung ? ' — ' + plandok.bezeichnung : ''}.`)
-  if (plandok?.schutzzone) hinweise.push('Schutzzone: Erhaltung der Struktur und des äußeren Erscheinungsbildes ist gesetzlich vorgeschrieben (§2 Z 52 BO Wien). Sanierung statt Abriss.')
-  if (plandok?.baufluchtlinien) hinweise.push('Im Bebauungsplan sind Baufluchtlinien festgesetzt — genaue Abstände dem Plan entnehmen.')
-  if (plandok?.besondere_bestimmungen?.length) {
-    hinweise.push(...plandok.besondere_bestimmungen.slice(0, 3))
-  }
-  if (!plandok && widmungCode) hinweise.push('Kein analysierter Bebauungsplan verfügbar — WBO-Standardwerte verwendet. Für Genehmigungsplanung Plandokument über MA 21 abrufen.')
-  if (bebauungsweise === 'gr') hinweise.push('Gemischte Bebauungsweise (Gründerzeit): Bebauungsweise aus WFS nicht eindeutig. Plandokument prüfen.')
-
-  const optimierungstipps: string[] = [
-    ...(maxGeschosse >= 2 ? ['Dachgeschossausbau nach §81 BO Wien möglich — erhöht NGF um ca. 25–40 % ohne Anrechnung auf Bebauungsgrad.'] : []),
-    'Technische Aufbauten (Liftschacht, Lüftungsanlage) bis max. 3,0 m über Gebäudehöhe zulässig (§81 Abs. 6 BO Wien).',
-    ...(!isGeschlossen ? ['§69 BO Wien: Auf Antrag können Abweichungen vom Bebauungsplan bewilligt werden, wenn das Ortsbild nicht beeinträchtigt wird.'] : []),
-    ...(bauklasse === 'I' || bauklasse === 'II' ? ['Keller (§63 BO Wien): Bei Hanglage als Vollgeschoss möglich — erhöht Nutzfläche ohne Anrechnung auf Gebäudehöhe.'] : []),
-  ]
-
-  // ─── Rückgabe ─────────────────────────────────────────────────────────────
-
-  // Hinweis zur Bebauungsweise-Quelle
-  if (isUnbekannt) {
-    hinweise.unshift('Bebauungsweise konnte nicht automatisch bestimmt werden. Bitte im Formular manuell auswählen (Bebauungsplan der MA 21 prüfen).')
-  } else if (bwQuelle.startsWith('Bezirk-Richtwert')) {
-    hinweise.unshift(`Bebauungsweise: ${bebauungsweise_text} — Schätzwert auf Basis des ${bwQuelle}. Der Flächenwidmungsplan der Wien (GENFLWIDMUNGOGD) enthält kein Bebauungsweise-Feld. Für verbindliche Aussagen Plandokument über MA 21 (www.wien.gv.at/bebauungsplaene) prüfen.`)
-  } else {
-    hinweise.unshift(`Bebauungsweise: ${bebauungsweise_text} — Quelle: ${bwQuelle}.`)
-  }
-
-  const result: BauParam & { bebauungsweise_quelle: string } = {
-    adresse: coords.adresse_aufgeloest,
-    lat: coords.lat,
-    lng: coords.lng,
-    grundstueck_m2: flaeche,
-    breite_m: breite,
-    tiefe_m: tiefe,
-    bezirk: widmungData?.bezirk,
-    widmung: widmungCode || '—',
-    widmung_text: widmungText,
-    bebaubar: true,
+  const result = berechneBoWien({
+    grundstueck_m2: parseFloat(String(flaeche_input)) || 800,
+    breite_m: parseFloat(String(breite_input)) || undefined,
+    tiefe_m: parseFloat(String(tiefe_input)) || undefined,
     bauklasse,
     bebauungsweise,
+    gebaeudehoehe_override: plandok?.maxHoeheM ?? undefined,
+    bauwich_vorne_override: plandok?.setbackFrontM ?? undefined,
+    bauwich_seitlich_override: plandok?.setbackSideM ?? undefined,
+    bauwich_hinten_override: plandok?.setbackRearM ?? undefined,
+    adresse: coords.adresse_aufgeloest,
+    bezirk,
+    widmung: widmungCode || '—',
+    widmung_text: widmungText,
+    plandokument_nr: plandok?.bezug,
+    plandokument_url: plandok?.pdfUrl ?? undefined,
+    schutzzone: false,
     bebauungsweise_text,
     bebauungsweise_quelle: bwQuelle,
-    plandokument_nr: plandok?.plandok_nr,
-    plandokument_url: plandok?.plan_url ?? undefined,
-    schutzzone: plandok?.schutzzone ?? false,
-    gebaeudehoehe_max_m: gebaeudehoehe,
-    max_geschosse: maxGeschosse,
-    dachform,
-    bauwich_seitlich_m: bauwich_s,
-    bauwich_vorne_m: bauwich_v,
-    bauwich_hinten_m: bauwich_h,
-    baukörper_breite_m: bk_breite,
-    baukörper_tiefe_m: bk_tiefe,
-    bebauungsgrad,
-    bebaute_flaeche_max_m2: bebaute_flaeche,
-    bgf_gesamt_m2: bgf,
-    ngf_geschaetzt_m2: ngf,
-    stellplaetze_pflicht: stellplaetze,
-    hinweise,
-    optimierungstipps,
-  }
+  })
 
   return Response.json(result)
 }
