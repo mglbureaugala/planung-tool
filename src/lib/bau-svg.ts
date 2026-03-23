@@ -1,51 +1,99 @@
-export interface BauParam {
-  bauklasse: string
-  widmung: string
-  bauweise: string
-  breite_m: number
-  tiefe_m: number
-  grundstueck_m2: number
-  grz_max: number
-  gfz_max: number
-  max_geschosse: number
-  traufenhoehe_m: number
-  firsthoehe_m: number
-  dachform: 'sattel' | 'flach' | 'walm'
-  geschoss_hoehe_m: number
-  bauwich_vorne_m: number
-  bauwich_hinten_m: number
-  bauwich_seitlich_m: number
-  baukörper_breite_m: number
-  baukörper_tiefe_m: number
-  bebaubare_flaeche_m2: number
-  bgf_gesamt_m2: number
-  wnf_geschaetzt_m2: number
-  stellplaetze_pflicht: number
-  hinweise: string[]
-  optimierungstipps: string[]
+/**
+ * SVG-Visualisierung des maximalen Baukörpers nach BO Wien
+ * Drei Ansichten: Lageplan (Draufsicht), Schnitt, Isometrie
+ */
+
+import type { BauParam } from './bau-types'
+
+export type { BauParam }
+
+const IKB      = '#002FA7'
+const IKB_MID  = '#4B6FD0'
+const BEIGE    = '#F4F3F1'
+const GRAY     = '#555555'
+const GRAY_LT  = '#999999'
+const BORDER   = '#CCCCAA'
+const HATCH_C  = '#C8C4BA'
+const FONT     = "'DIN Condensed','Arial Narrow',Arial,sans-serif"
+
+// ─── Helper: SVG-Primitives ──────────────────────────────────────────────────
+
+function line(x1: number, y1: number, x2: number, y2: number, attr = '') {
+  return `<line x1="${r(x1)}" y1="${r(y1)}" x2="${r(x2)}" y2="${r(y2)}" ${attr}/>`
 }
 
-const IKB = '#002FA7'
-const IKB_LIGHT = '#E8EEFF'
-const GRAY = '#555'
-const LIGHT = '#F4F3F1'
-const HATCH = '#D8D5D0'
-const GROUND_COLOR = '#8B7355'
+function rect(x: number, y: number, w: number, h: number, attr = '') {
+  return `<rect x="${r(x)}" y="${r(y)}" width="${r(w)}" height="${r(h)}" ${attr}/>`
+}
+
+function text(x: number, y: number, s: string, attr = '') {
+  return `<text x="${r(x)}" y="${r(y)}" ${attr}>${esc(s)}</text>`
+}
+
+function r(n: number) { return Math.round(n * 10) / 10 }
+function esc(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// Horizontale Bemaßungslinie
+function dimH(x1: number, x2: number, y: number, label: string, arrowDown = false): string {
+  const ay = arrowDown ? y + 5 : y - 5
+  const tickDir = arrowDown ? -1 : 1
+  return [
+    line(x1, y, x2, y, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    line(x1, y, x1, y - tickDir * 6, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    line(x2, y, x2, y - tickDir * 6, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    `<polygon points="${r(x1)},${r(ay)} ${r(x1 + 4)},${r(y)} ${r(x1 + 4)},${r(ay)}" fill="${GRAY_LT}"/>`,
+    `<polygon points="${r(x2)},${r(ay)} ${r(x2 - 4)},${r(y)} ${r(x2 - 4)},${r(ay)}" fill="${GRAY_LT}"/>`,
+    text((x1 + x2) / 2, arrowDown ? y + 14 : y - 4, label,
+      `text-anchor="middle" font-size="7.5" fill="${GRAY}" font-family="${FONT}"`),
+  ].join('\n')
+}
+
+// Vertikale Bemaßungslinie
+function dimV(y1: number, y2: number, x: number, label: string): string {
+  return [
+    line(x, y1, x, y2, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    line(x, y1, x + 6, y1, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    line(x, y2, x + 6, y2, `stroke="${GRAY_LT}" stroke-width="0.6"`),
+    `<polygon points="${r(x - 5)},${r(y1)} ${r(x)},${r(y1 + 4)} ${r(x - 5)},${r(y1 + 4)}" fill="${GRAY_LT}"/>`,
+    `<polygon points="${r(x - 5)},${r(y2)} ${r(x)},${r(y2 - 4)} ${r(x - 5)},${r(y2 - 4)}" fill="${GRAY_LT}"/>`,
+    text(x + 9, (y1 + y2) / 2 + 3, label,
+      `text-anchor="start" font-size="7.5" fill="${GRAY}" font-family="${FONT}"`),
+  ].join('\n')
+}
+
+// Nordpfeil
+function northArrow(cx: number, cy: number): string {
+  return [
+    `<polygon points="${r(cx)},${r(cy - 12)} ${r(cx - 5)},${r(cy + 2)} ${r(cx)},${r(cy - 2)}" fill="${IKB}"/>`,
+    `<polygon points="${r(cx)},${r(cy - 12)} ${r(cx + 5)},${r(cy + 2)} ${r(cx)},${r(cy - 2)}" fill="${GRAY_LT}"/>`,
+    text(cx, cy + 14, 'N', `text-anchor="middle" font-size="8" fill="${IKB}" font-family="${FONT}" font-weight="bold"`),
+  ].join('\n')
+}
+
+// Legendenzeile
+function legendRow(x: number, y: number, color: string, fill: string, dash: string, label: string): string {
+  return [
+    rect(x, y - 6, 14, 8, `fill="${fill}" stroke="${color}" stroke-width="0.8" stroke-dasharray="${dash}"`),
+    text(x + 18, y + 1, label, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`),
+  ].join('\n')
+}
 
 // ─── Lageplan ────────────────────────────────────────────────────────────────
 
 export function generateLageplan(p: BauParam): string {
-  const W = 520, H = 420
-  const PAD_L = 60, PAD_T = 44, PAD_R = 140, PAD_B = 54
+  const W = 560, H = 440
+  const PAD_L = 56, PAD_T = 40, PAD_R = 160, PAD_B = 60
 
-  const availW = W - PAD_L - PAD_R
-  const availH = H - PAD_T - PAD_B
-  const scale = Math.min(availW / p.breite_m, availH / p.tiefe_m) * 0.92
+  const aW = W - PAD_L - PAD_R
+  const aH = H - PAD_T - PAD_B
+  const scale = Math.min(aW / p.breite_m, aH / p.tiefe_m) * 0.88
 
-  const plotW = p.breite_m * scale
-  const plotH = p.tiefe_m * scale
-  const ox = PAD_L + (availW - plotW) / 2
-  const oy = PAD_T + (availH - plotH) / 2
+  const pW = p.breite_m * scale
+  const pH = p.tiefe_m * scale
+  const ox = PAD_L + (aW - pW) / 2
+  const oy = PAD_T + (aH - pH) / 2
 
   const sv = p.bauwich_vorne_m * scale
   const sh = p.bauwich_hinten_m * scale
@@ -53,351 +101,286 @@ export function generateLageplan(p: BauParam): string {
 
   const bkX = ox + ss
   const bkY = oy + sv
-  const bkW = plotW - 2 * ss
-  const bkH = plotH - sv - sh
+  const bkW = Math.max(0, pW - 2 * ss)
+  const bkH = Math.max(0, pH - sv - sh)
 
-  const grz_actual = (bkW * bkH) / (plotW * plotH)
+  const lx = W - PAD_R + 14  // Legende x
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="'DIN Condensed','Arial Narrow',Arial,sans-serif">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="${FONT}">
   <defs>
-    <pattern id="lp-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <line x1="0" y1="0" x2="0" y2="7" stroke="${HATCH}" stroke-width="1.2"/>
+    <pattern id="lp-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="${HATCH_C}" stroke-width="1.2"/>
+    </pattern>
+    <pattern id="lp-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#E8E6E0" stroke-width="0.4"/>
+      <line x1="0" y1="0" x2="0" y2="20" stroke="#E8E6E0" stroke-width="0.4"/>
     </pattern>
   </defs>
 
+  <!-- Hintergrund & Raster -->
+  <rect width="${W}" height="${H}" fill="white"/>
+  <rect x="${PAD_L}" y="${PAD_T}" width="${aW}" height="${aH}" fill="url(#lp-grid)"/>
+
   <!-- Titel -->
-  <text x="${W / 2}" y="18" text-anchor="middle" font-size="9" fill="#888" letter-spacing="2">LAGEPLAN  ·  MAXIMALE BEBAUUNG</text>
-  <line x1="${PAD_L}" y1="24" x2="${W - PAD_R + 20}" y2="24" stroke="#DDD" stroke-width="0.5"/>
+  <text x="${PAD_L}" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}" text-transform="uppercase">LAGEPLAN — MAXIMALE BEBAUUNG</text>
+  <line x1="${PAD_L}" y1="28" x2="${W - PAD_R}" y2="28" stroke="${BORDER}" stroke-width="0.5"/>
 
-  <!-- Grundstück -->
-  <rect x="${ox}" y="${oy}" width="${plotW}" height="${plotH}" fill="${LIGHT}" stroke="${GRAY}" stroke-width="1.5"/>
+  <!-- Abstandsflächen (Bauwich) -->
+  ${rect(ox, oy, pW, pH, `fill="url(#lp-hatch)" stroke="none"`)}
 
-  <!-- Abstandsflächen -->
-  <rect x="${ox}" y="${oy}" width="${plotW}" height="${sv}" fill="url(#lp-hatch)"/>
-  <rect x="${ox}" y="${oy + plotH - sh}" width="${plotW}" height="${sh}" fill="url(#lp-hatch)"/>
-  <rect x="${ox}" y="${oy + sv}" width="${ss}" height="${plotH - sv - sh}" fill="url(#lp-hatch)"/>
-  <rect x="${ox + plotW - ss}" y="${oy + sv}" width="${ss}" height="${plotH - sv - sh}" fill="url(#lp-hatch)"/>
+  <!-- Grundstücksgrenze -->
+  ${rect(ox, oy, pW, pH, `fill="none" stroke="${GRAY}" stroke-width="1.6" stroke-dasharray="6,3"`)}
 
-  <!-- Baufluchtlinien (gestrichelt) -->
-  <line x1="${bkX}" y1="${oy - 4}" x2="${bkX}" y2="${oy + plotH + 4}" stroke="${IKB}" stroke-width="0.6" stroke-dasharray="5,3" opacity="0.55"/>
-  <line x1="${bkX + bkW}" y1="${oy - 4}" x2="${bkX + bkW}" y2="${oy + plotH + 4}" stroke="${IKB}" stroke-width="0.6" stroke-dasharray="5,3" opacity="0.55"/>
-  <line x1="${ox - 4}" y1="${bkY}" x2="${ox + plotW + 4}" y2="${bkY}" stroke="${IKB}" stroke-width="0.6" stroke-dasharray="5,3" opacity="0.55"/>
-  <line x1="${ox - 4}" y1="${bkY + bkH}" x2="${ox + plotW + 4}" y2="${bkY + bkH}" stroke="${IKB}" stroke-width="0.6" stroke-dasharray="5,3" opacity="0.55"/>
+  <!-- Baukörper -->
+  ${bkW > 0 && bkH > 0 ? rect(bkX, bkY, bkW, bkH, `fill="${IKB}" fill-opacity="0.18" stroke="${IKB}" stroke-width="2"`) : ''}
 
-  <!-- Maximaler Baukörper -->
-  <rect x="${bkX}" y="${bkY}" width="${bkW}" height="${bkH}" fill="${IKB}" fill-opacity="0.14" stroke="${IKB}" stroke-width="1.8"/>
+  <!-- Bemaßung: Breite -->
+  ${dimH(ox, ox + pW, oy - 16, `${p.breite_m} m`)}
+  ${bkW > 0 ? dimH(bkX, bkX + bkW, oy + pH + 22, `${p.baukörper_breite_m} m`, true) : ''}
 
-  <!-- Kreuz im Baukörper -->
-  <line x1="${bkX + bkW * 0.2}" y1="${bkY + bkH * 0.5}" x2="${bkX + bkW * 0.8}" y2="${bkY + bkH * 0.5}" stroke="${IKB}" stroke-width="0.4" opacity="0.3"/>
-  <line x1="${bkX + bkW * 0.5}" y1="${bkY + bkH * 0.15}" x2="${bkX + bkW * 0.5}" y2="${bkY + bkH * 0.85}" stroke="${IKB}" stroke-width="0.4" opacity="0.3"/>
+  <!-- Bemaßung: Tiefe -->
+  ${dimV(oy, oy + pH, ox - 16, `${p.tiefe_m} m`)}
+  ${bkH > 0 ? dimV(bkY, bkY + bkH, ox + pW + 14, `${p.baukörper_tiefe_m} m`) : ''}
 
-  <!-- Label im Baukörper -->
-  <text x="${bkX + bkW / 2}" y="${bkY + bkH / 2 - 9}" text-anchor="middle" font-size="9.5" fill="${IKB}" opacity="0.85" letter-spacing="0.5">MAX. BAUKÖRPER</text>
-  <text x="${bkX + bkW / 2}" y="${bkY + bkH / 2 + 8}" text-anchor="middle" font-size="13" fill="${IKB}" font-weight="bold">${Math.round(p.bebaubare_flaeche_m2)} m²</text>
-  <text x="${bkX + bkW / 2}" y="${bkY + bkH / 2 + 22}" text-anchor="middle" font-size="8.5" fill="${IKB}" opacity="0.7">GRZ ${grz_actual.toFixed(2)}</text>
-
-  <!-- Maßlinie unten: Grundstücksbreite -->
-  ${dimLineH(ox, oy + plotH + 18, plotW, `${p.breite_m.toFixed(1)} m`)}
-
-  <!-- Maßlinie oben: Baukörperbreite -->
-  ${dimLineH(bkX, oy - 16, bkW, `${p.baukörper_breite_m.toFixed(1)} m`, IKB)}
-
-  <!-- Maßlinie rechts: Grundstückstiefe -->
-  ${dimLineV(ox + plotW + 18, oy, plotH, `${p.tiefe_m.toFixed(1)} m`)}
-
-  <!-- Abstandsmaße links -->
-  ${ss > 4 ? smallDim(ox + ss / 2, oy + plotH + 30, `${p.bauwich_seitlich_m.toFixed(0)}m`) : ''}
-  ${ss > 4 ? smallDim(bkX + bkW + ss / 2, oy + plotH + 30, `${p.bauwich_seitlich_m.toFixed(0)}m`) : ''}
+  <!-- Bauwich-Beschriftungen -->
+  ${p.bauwich_vorne_m > 0 ? text(ox + pW / 2, oy + sv / 2 + 3, `Bauwich v. ${p.bauwich_vorne_m} m`, `text-anchor="middle" font-size="7" fill="${GRAY}" font-family="${FONT}"`) : ''}
+  ${p.bauwich_hinten_m > 0 ? text(ox + pW / 2, oy + pH - sh / 2 + 3, `Bauwich h. ${p.bauwich_hinten_m} m`, `text-anchor="middle" font-size="7" fill="${GRAY}" font-family="${FONT}"`) : ''}
+  ${p.bauwich_seitlich_m > 0 && ss > 6 ? text(ox + ss / 2, oy + pH / 2, `${p.bauwich_seitlich_m}m`, `text-anchor="middle" font-size="6.5" fill="${GRAY}" font-family="${FONT}" transform="rotate(-90,${r(ox + ss / 2)},${r(oy + pH / 2)})"`) : ''}
 
   <!-- Nordpfeil -->
-  ${northArrow(ox + 22, oy + 22)}
+  ${northArrow(ox + pW + 24, oy + 22)}
 
-  <!-- Legende rechts -->
-  <g transform="translate(${W - PAD_R + 14}, ${oy})">
-    <rect width="118" height="${plotH}" rx="2" fill="white" stroke="#E0DEDB" stroke-width="0.8"/>
+  <!-- Legende -->
+  <line x1="${lx - 4}" y1="${PAD_T}" x2="${lx - 4}" y2="${H - 30}" stroke="${BORDER}" stroke-width="0.5"/>
+  ${text(lx, PAD_T + 12, 'LEGENDE', `font-size="7" fill="${GRAY_LT}" letter-spacing="1.5" font-family="${FONT}"`)}
+  ${legendRow(lx, PAD_T + 28, GRAY, BEIGE, '6,3', 'Grundstücksgrenze')}
+  ${legendRow(lx, PAD_T + 44, HATCH_C, 'url(#lp-hatch)', '', 'Bauwich §78 BO Wien')}
+  ${legendRow(lx, PAD_T + 60, IKB, `${IKB}30`, '', 'max. Baukörper')}
 
-    <!-- Legende Einträge -->
-    <rect x="8" y="14" width="12" height="10" fill="url(#lp-hatch)"/>
-    <text x="26" y="23" font-size="8.5" fill="#555">Abstandsfläche</text>
+  <line x1="${lx}" y1="${PAD_T + 70}" x2="${lx + 120}" y2="${PAD_T + 70}" stroke="${BORDER}" stroke-width="0.4"/>
+  ${text(lx, PAD_T + 84, `Widmung: ${p.widmung}`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(lx, PAD_T + 96, `BKl. ${p.bauklasse}`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(lx, PAD_T + 108, p.bebauungsweise_text.replace('Bebauungsweise', 'BW').replace('offene', 'o.').replace('geschlossene', 'g.').replace('gekuppelte', 'gk.').replace('gemischte', 'gr.'), `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
 
-    <rect x="8" y="30" width="12" height="10" fill="${IKB}" fill-opacity="0.14" stroke="${IKB}" stroke-width="1"/>
-    <text x="26" y="39" font-size="8.5" fill="#555">Max. Baukörper</text>
-
-    <line x1="8" y1="54" x2="20" y2="54" stroke="${IKB}" stroke-width="0.7" stroke-dasharray="4,2"/>
-    <text x="26" y="57" font-size="8.5" fill="#555">Baufluchtlinie</text>
-
-    <line x1="8" y1="68" x2="${plotH > 20 ? 108 : 60}" y2="68" stroke="#DDD" stroke-width="0.5"/>
-
-    <!-- Kennwerte -->
-    ${legenzeile(8, 80, 'GRZ max.', p.grz_max.toFixed(2))}
-    ${legenzeile(8, 96, 'GFZ max.', p.gfz_max.toFixed(2))}
-    ${legenzeile(8, 112, 'Geschosse', String(p.max_geschosse))}
-    ${legenzeile(8, 128, 'Traufe', p.traufenhoehe_m.toFixed(1) + ' m')}
-    ${legenzeile(8, 144, 'BGF ges.', Math.round(p.bgf_gesamt_m2) + ' m²')}
-    ${legenzeile(8, 160, 'WNF ca.', Math.round(p.wnf_geschaetzt_m2) + ' m²')}
-    ${legenzeile(8, 176, 'Stellpl.', String(p.stellplaetze_pflicht))}
-    ${legenzeile(8, 192, 'Bauklasse', p.bauklasse)}
-    ${legenzeile(8, 208, 'Bauweise', p.bauweise)}
-  </g>
+  <line x1="${lx}" y1="${PAD_T + 118}" x2="${lx + 120}" y2="${PAD_T + 118}" stroke="${BORDER}" stroke-width="0.4"/>
+  ${text(lx, PAD_T + 132, `Bebauungsgrad: ${Math.round(p.bebauungsgrad * 100)} %`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(lx, PAD_T + 144, `beb. Fläche: ${p.bebaute_flaeche_max_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(lx, PAD_T + 156, `BGF: ${p.bgf_gesamt_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(lx, PAD_T + 168, `NGF: ${p.ngf_geschaetzt_m2} m²`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
 
   <!-- Maßstab -->
-  ${massStab(ox, oy + plotH + 38, scale)}
+  ${text(ox, H - 12, `Maßstab ~1:${Math.round(1 / scale * 100 / 100) * 100 || 500}`, `font-size="7" fill="${GRAY_LT}" font-family="${FONT}"`)}
+
+  <!-- Grundstücksfläche Label -->
+  ${text(ox + pW / 2, oy + pH / 2 + 4, `${p.grundstueck_m2} m²`, `text-anchor="middle" font-size="9" fill="${GRAY_LT}" font-family="${FONT}"`)}
 </svg>`
 }
 
-// ─── Schnitt ──────────────────────────────────────────────────────────────────
+// ─── Schnitt ─────────────────────────────────────────────────────────────────
 
 export function generateSchnitt(p: BauParam): string {
-  const W = 520, H = 320
-  const PAD_L = 60, PAD_T = 36, PAD_R = 130, PAD_B = 48
-  const GROUND_Y = H - PAD_B
+  const W = 560, H = 360
+  const PAD_L = 72, PAD_R = 80, PAD_T = 36, PAD_B = 60
 
-  const availH = H - PAD_T - PAD_B - 20
-  const scaleH = availH / (p.firsthoehe_m + 1.5)
+  const aW = W - PAD_L - PAD_R
+  const aH = H - PAD_T - PAD_B
 
-  const bldH = p.traufenhoehe_m * scaleH
-  const firstH = p.firsthoehe_m * scaleH
-  const geschossH = p.geschoss_hoehe_m * scaleH
+  const bkW = p.baukörper_breite_m
+  const bkT = p.baukörper_tiefe_m
+  // Schnittbreite = Baukörperbreite, aber min 60% der Gesamtbreite
+  const scaleW = Math.min(aW / Math.max(bkW, p.breite_m), aW / 8)
+  const scaleH = aH / (p.gebaeudehoehe_max_m + 3.5)  // Platz für Dach
 
-  // Baukörper Breite im Schnitt (verwende Tiefe des Baukörpers für Ansicht)
-  const bldW = Math.min(p.baukörper_tiefe_m * scaleH * 1.2, W - PAD_L - PAD_R - 20)
-  const bkX = PAD_L + (W - PAD_L - PAD_R - bldW) / 2
-  const bkY = GROUND_Y - bldH
+  // Horizontale Positionen
+  const plotX1 = PAD_L + (aW - p.breite_m * scaleW) / 2
+  const plotX2 = plotX1 + p.breite_m * scaleW
+  const bkX1 = PAD_L + (aW - bkW * scaleW) / 2
+  const bkX2 = bkX1 + bkW * scaleW
 
-  const hasRoof = p.dachform === 'sattel' || p.dachform === 'walm'
-  const roofH = firstH - bldH
-  const ridgeX = bkX + bldW / 2
+  // Vertikale Positionen (Boden unten)
+  const groundY = H - PAD_B
+  const traufeY = groundY - p.gebaeudehoehe_max_m * scaleH
+  const gescHoehe = p.gebaeudehoehe_max_m / p.max_geschosse
 
-  // Geschoss-Linien
-  const floors = Array.from({ length: p.max_geschosse }, (_, i) => GROUND_Y - (i + 1) * geschossH)
+  // Dachhöhe
+  const dachH = p.dachform === 'sattel' ? bkW * scaleW * 0.35 : 6
+  const firstY = traufeY - dachH
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="'DIN Condensed','Arial Narrow',Arial,sans-serif">
-
-  <!-- Titel -->
-  <text x="${W / 2}" y="17" text-anchor="middle" font-size="9" fill="#888" letter-spacing="2">SCHNITT  ·  MAXIMALE GEBÄUDEHÖHE</text>
-  <line x1="${PAD_L - 10}" y1="22" x2="${W - PAD_R + 10}" y2="22" stroke="#DDD" stroke-width="0.5"/>
-
-  <!-- Himmel -->
-  <rect x="${PAD_L - 10}" y="${PAD_T}" width="${W - PAD_L - PAD_R + 20}" height="${GROUND_Y - PAD_T}" fill="#F7F9FF" opacity="0.5"/>
-
-  <!-- Gelände links & rechts -->
-  <rect x="${PAD_L - 10}" y="${GROUND_Y}" width="${bkX - PAD_L + 10}" height="${H - GROUND_Y}" fill="${GROUND_COLOR}" opacity="0.2"/>
-  <rect x="${bkX + bldW}" y="${GROUND_Y}" width="${W - PAD_R + 10 - bkX - bldW}" height="${H - GROUND_Y}" fill="${GROUND_COLOR}" opacity="0.2"/>
-
-  <!-- Terrain Linie -->
-  <line x1="${PAD_L - 10}" y1="${GROUND_Y}" x2="${W - PAD_R + 10}" y2="${GROUND_Y}" stroke="${GROUND_COLOR}" stroke-width="2.5"/>
-
-  <!-- Gebäudekörper -->
-  <rect x="${bkX}" y="${bkY}" width="${bldW}" height="${bldH}" fill="${IKB}" fill-opacity="0.12" stroke="${IKB}" stroke-width="1.8"/>
-
-  <!-- Geschoss-Linien -->
-  ${floors.map(fy => `
-    <line x1="${bkX + 2}" y1="${fy}" x2="${bkX + bldW - 2}" y2="${fy}" stroke="${IKB}" stroke-width="0.7" stroke-dasharray="6,4" opacity="0.5"/>
-  `).join('')}
-
-  <!-- Dach -->
-  ${hasRoof ? `
-    <polygon points="${bkX},${bkY} ${ridgeX},${GROUND_Y - firstH} ${bkX + bldW},${bkY}"
-      fill="${IKB}" fill-opacity="0.08" stroke="${IKB}" stroke-width="1.5"/>
-    <!-- Dachschatten -->
-    <line x1="${bkX}" y1="${bkY}" x2="${ridgeX}" y2="${GROUND_Y - firstH}" stroke="${IKB}" stroke-width="1.5"/>
-    <line x1="${bkX + bldW}" y1="${bkY}" x2="${ridgeX}" y2="${GROUND_Y - firstH}" stroke="${IKB}" stroke-width="1.5"/>
-  ` : `
-    <!-- Flachdach / Attika -->
-    <rect x="${bkX - 2}" y="${bkY - 6}" width="${bldW + 4}" height="6" fill="${IKB}" fill-opacity="0.25" stroke="${IKB}" stroke-width="1"/>
-  `}
-
-  <!-- Geschoss-Labels links -->
-  <text x="${bkX - 8}" y="${GROUND_Y - geschossH * 0.5 + 4}" text-anchor="end" font-size="8" fill="${IKB}" opacity="0.75">EG</text>
-  ${floors.slice(0, -1).map((fy, i) => `
-    <text x="${bkX - 8}" y="${fy - geschossH * 0.5 + 4}" text-anchor="end" font-size="8" fill="${IKB}" opacity="0.75">OG ${i + 1}</text>
-  `).join('')}
-  ${hasRoof ? `<text x="${bkX - 8}" y="${bkY - roofH / 2 + 4}" text-anchor="end" font-size="8" fill="${IKB}" opacity="0.75">DG</text>` : ''}
-
-  <!-- Maßlinien rechts: Traufenhöhe -->
-  ${heightDim(bkX + bldW + 18, GROUND_Y, bkY, p.traufenhoehe_m.toFixed(1) + ' m', 'Traufe')}
-
-  <!-- Firsthöhe (wenn Dach) -->
-  ${hasRoof ? heightDim(bkX + bldW + 55, GROUND_Y, GROUND_Y - firstH, p.firsthoehe_m.toFixed(1) + ' m', 'First') : ''}
-
-  <!-- Geschossmaß -->
-  ${heightDim(bkX - 28, GROUND_Y, bkY + bldH - geschossH, p.geschoss_hoehe_m.toFixed(1) + ' m', '', '#999')}
-
-  <!-- Terrain-Beschriftung -->
-  <text x="${PAD_L - 12}" y="${GROUND_Y + 14}" font-size="8" fill="${GROUND_COLOR}" opacity="0.8">±0.00</text>
-
-  <!-- Legende rechts -->
-  <g transform="translate(${W - PAD_R + 14}, ${PAD_T + 5})">
-    <rect width="108" height="${H - PAD_T - PAD_B - 5}" rx="2" fill="white" stroke="#E0DEDB" stroke-width="0.8"/>
-    ${legenzeile(8, 18, 'Traufenhöhe', p.traufenhoehe_m.toFixed(1) + ' m')}
-    ${hasRoof ? legenzeile(8, 34, 'Firsthöhe', p.firsthoehe_m.toFixed(1) + ' m') : ''}
-    ${legenzeile(8, hasRoof ? 50 : 34, 'Geschosshöhe', p.geschoss_hoehe_m.toFixed(1) + ' m')}
-    ${legenzeile(8, hasRoof ? 66 : 50, 'Vollgeschosse', String(p.max_geschosse))}
-    ${legenzeile(8, hasRoof ? 82 : 66, 'Dachform', p.dachform === 'sattel' ? 'Satteldach' : p.dachform === 'walm' ? 'Walmdach' : 'Flachdach')}
-    <line x1="8" y1="${hasRoof ? 96 : 80}" x2="100" y2="${hasRoof ? 96 : 80}" stroke="#DDD" stroke-width="0.5"/>
-    ${legenzeile(8, hasRoof ? 110 : 94, 'BGF je Gesch.', Math.round(p.bebaubare_flaeche_m2 * 0.95) + ' m²')}
-    ${legenzeile(8, hasRoof ? 126 : 110, 'BGF gesamt', Math.round(p.bgf_gesamt_m2) + ' m²')}
-  </g>
-</svg>`
-}
-
-// ─── Isometrie ────────────────────────────────────────────────────────────────
-
-export function generateIsometrie(p: BauParam): string {
-  const W = 400, H = 320
-  const cx = W / 2, cy = H * 0.65
-
-  // Isometrische Projektion: Einheitsvektoren
-  // x-Achse (Breite): rechts-unten
-  // z-Achse (Tiefe): links-unten
-  // y-Achse (Höhe): nach oben
-  const isoX = (x: number, y: number, z: number) => cx + (x - z) * 0.6
-  const isoY = (x: number, y: number, z: number) => cy - y * 0.8 + (x + z) * 0.3
-
-  // Skalierung — Baukörper im Verhältnis
-  const maxDim = Math.max(p.baukörper_breite_m, p.baukörper_tiefe_m, p.firsthoehe_m)
-  const s = Math.min(W, H) * 0.28 / maxDim
-
-  const bW = p.baukörper_breite_m * s
-  const bD = p.baukörper_tiefe_m * s
-  const bH = p.traufenhoehe_m * s
-  const fH = p.firsthoehe_m * s
-
-  const hasRoof = p.dachform !== 'flach'
-
-  // Bodenplatte
-  const f00 = [isoX(0, 0, 0), isoY(0, 0, 0)]
-  const f10 = [isoX(bW, 0, 0), isoY(bW, 0, 0)]
-  const f11 = [isoX(bW, 0, bD), isoY(bW, 0, bD)]
-  const f01 = [isoX(0, 0, bD), isoY(0, 0, bD)]
-
-  // Oberseite (Traufe)
-  const t00 = [isoX(0, bH, 0), isoY(0, bH, 0)]
-  const t10 = [isoX(bW, bH, 0), isoY(bW, bH, 0)]
-  const t11 = [isoX(bW, bH, bD), isoY(bW, bH, bD)]
-  const t01 = [isoX(0, bH, bD), isoY(0, bH, bD)]
-
-  // First (Mitte oben)
-  const r0 = [isoX(bW / 2, fH, 0), isoY(bW / 2, fH, 0)]
-  const r1 = [isoX(bW / 2, fH, bD), isoY(bW / 2, fH, bD)]
-
-  const poly = (pts: number[][]) => pts.map(p => p.join(',')).join(' ')
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="'DIN Condensed','Arial Narrow',Arial,sans-serif">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="${FONT}">
+  <rect width="${W}" height="${H}" fill="white"/>
 
   <!-- Titel -->
-  <text x="${W / 2}" y="17" text-anchor="middle" font-size="9" fill="#888" letter-spacing="2">ISOMETRIE  ·  BAUKÖRPERVOLUMEN</text>
+  <text x="${PAD_L}" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}">SCHNITT — GEBÄUDEHÖHE §75 BO WIEN</text>
+  <line x1="${PAD_L}" y1="28" x2="${W - PAD_R}" y2="28" stroke="${BORDER}" stroke-width="0.5"/>
 
-  <!-- Schatten / Boden -->
-  <ellipse cx="${isoX(bW / 2, 0, bD / 2)}" cy="${isoY(bW / 2, 0, bD / 2) + 8}" rx="${bW * 0.7}" ry="${bD * 0.2}" fill="#000" opacity="0.06"/>
+  <!-- Gelände -->
+  <rect x="${plotX1 - 20}" y="${groundY}" width="${p.breite_m * scaleW + 40}" height="10" fill="${BEIGE}" stroke="${BORDER}" stroke-width="0.8"/>
+  ${text((plotX1 + plotX2) / 2, groundY + 8, 'Geländeniveau (Niveaulinie)', `text-anchor="middle" font-size="7" fill="${GRAY_LT}" font-family="${FONT}"`)}
 
-  <!-- Bodenplatte -->
-  <polygon points="${poly([f00, f10, f11, f01])}" fill="${LIGHT}" stroke="${GRAY}" stroke-width="0.8" opacity="0.6"/>
-
-  <!-- Front-Fläche (links sichtbar) -->
-  <polygon points="${poly([f00, t00, t10, f10])}" fill="${IKB}" fill-opacity="0.10" stroke="${IKB}" stroke-width="1.2"/>
-
-  <!-- Seiten-Fläche (rechts sichtbar) -->
-  <polygon points="${poly([f10, t10, t11, f11])}" fill="${IKB}" fill-opacity="0.07" stroke="${IKB}" stroke-width="1.2"/>
-
-  ${hasRoof ? `
-    <!-- Dach vorne -->
-    <polygon points="${poly([t00, r0, r1, t01])}" fill="${IKB}" fill-opacity="0.18" stroke="${IKB}" stroke-width="1.2"/>
-    <!-- Dach hinten -->
-    <polygon points="${poly([t10, r0, r1, t11])}" fill="${IKB}" fill-opacity="0.12" stroke="${IKB}" stroke-width="1.2"/>
-    <!-- First-Linie -->
-    <line x1="${r0[0]}" y1="${r0[1]}" x2="${r1[0]}" y2="${r1[1]}" stroke="${IKB}" stroke-width="1.5"/>
-    <!-- Trauf-Linie vorne -->
-    <line x1="${t00[0]}" y1="${t00[1]}" x2="${t01[0]}" y2="${t01[1]}" stroke="${IKB}" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
-  ` : `
-    <!-- Dachfläche (Flachdach) -->
-    <polygon points="${poly([t00, t10, t11, t01])}" fill="${IKB}" fill-opacity="0.2" stroke="${IKB}" stroke-width="1.2"/>
-  `}
-
-  <!-- Vertikale Kanten -->
-  <line x1="${f00[0]}" y1="${f00[1]}" x2="${t00[0]}" y2="${t00[1]}" stroke="${IKB}" stroke-width="1"/>
-  <line x1="${f10[0]}" y1="${f10[1]}" x2="${t10[0]}" y2="${t10[1]}" stroke="${IKB}" stroke-width="1.4"/>
-  <line x1="${f11[0]}" y1="${f11[1]}" x2="${t11[0]}" y2="${t11[1]}" stroke="${IKB}" stroke-width="1"/>
-
-  <!-- Maß-Annotation: Breite -->
-  <line x1="${f00[0]}" y1="${f00[1] + 14}" x2="${f10[0]}" y2="${f10[1] + 14}" stroke="${GRAY}" stroke-width="0.7"/>
-  <line x1="${f00[0]}" y1="${f00[1] + 10}" x2="${f00[0]}" y2="${f00[1] + 18}" stroke="${GRAY}" stroke-width="0.7"/>
-  <line x1="${f10[0]}" y1="${f10[1] + 10}" x2="${f10[0]}" y2="${f10[1] + 18}" stroke="${GRAY}" stroke-width="0.7"/>
-  <text x="${(f00[0] + f10[0]) / 2}" y="${(f00[1] + f10[1]) / 2 + 24}" text-anchor="middle" font-size="9" fill="${GRAY}">${p.baukörper_breite_m.toFixed(1)} m</text>
-
-  <!-- Maß-Annotation: Höhe -->
-  <line x1="${t10[0] + 14}" y1="${t10[1]}" x2="${f10[0] + 14}" y2="${f10[1]}" stroke="${GRAY}" stroke-width="0.7"/>
-  <line x1="${t10[0] + 10}" y1="${t10[1]}" x2="${t10[0] + 18}" y2="${t10[1]}" stroke="${GRAY}" stroke-width="0.7"/>
-  <line x1="${f10[0] + 10}" y1="${f10[1]}" x2="${f10[0] + 18}" y2="${f10[1]}" stroke="${GRAY}" stroke-width="0.7"/>
-  <text x="${t10[0] + 26}" y="${(t10[1] + f10[1]) / 2 + 4}" font-size="9" fill="${GRAY}">${p.traufenhoehe_m.toFixed(1)} m</text>
-
-  ${hasRoof ? `
-  <!-- First-Höhe Annotation -->
-  <line x1="${r0[0] + 8}" y1="${r0[1]}" x2="${t10[0] + 8}" y2="${t10[1]}" stroke="${IKB}" stroke-width="0.5" stroke-dasharray="3,2" opacity="0.5"/>
-  <text x="${r0[0] + 16}" y="${(r0[1] + t10[1]) / 2 + 4}" font-size="8" fill="${IKB}" opacity="0.7">Dach +${(p.firsthoehe_m - p.traufenhoehe_m).toFixed(1)}m</text>
+  <!-- Bauwich vorne/hinten (schraffiert) -->
+  ${p.bauwich_vorne_m > 0 ? `
+  <rect x="${plotX1}" y="${traufeY}" width="${p.bauwich_vorne_m * scaleW}" height="${p.gebaeudehoehe_max_m * scaleH}" fill="#F0EDE8" stroke="none" opacity="0.7"/>
   ` : ''}
 
-  <!-- BGF Label -->
-  <text x="${W / 2}" y="${H - 14}" text-anchor="middle" font-size="9" fill="#999">
-    BGF: ${Math.round(p.bgf_gesamt_m2)} m²  ·  ${p.max_geschosse} Geschosse  ·  Bauklasse ${p.bauklasse}
-  </text>
+  <!-- Baukörper Wandfläche -->
+  ${rect(bkX1, traufeY, bkW * scaleW, p.gebaeudehoehe_max_m * scaleH, `fill="${IKB}" fill-opacity="0.12" stroke="${IKB}" stroke-width="1.8"`)}
+
+  <!-- Geschosslinien -->
+  ${Array.from({ length: p.max_geschosse - 1 }, (_, i) => {
+    const y = groundY - (i + 1) * gescHoehe * scaleH
+    return line(bkX1, y, bkX2, y, `stroke="${IKB_MID}" stroke-width="0.7" stroke-dasharray="6,3"`)
+  }).join('\n  ')}
+
+  <!-- Geschossbeschriftung -->
+  ${Array.from({ length: p.max_geschosse }, (_, i) => {
+    const y = groundY - (i + 0.5) * gescHoehe * scaleH
+    const label = i === 0 ? 'EG' : i === 1 ? 'OG 1' : i === 2 ? 'OG 2' : i === 3 ? 'OG 3' : `OG ${i}`
+    return text(bkX1 + 5, y + 3, label, `font-size="7.5" fill="${IKB}" font-family="${FONT}"`)
+  }).join('\n  ')}
+
+  <!-- Dach -->
+  ${p.dachform === 'sattel' ? `
+  <polygon points="${r(bkX1)},${r(traufeY)} ${r((bkX1 + bkX2) / 2)},${r(firstY)} ${r(bkX2)},${r(traufeY)}"
+    fill="${IKB}" fill-opacity="0.20" stroke="${IKB}" stroke-width="1.6"/>
+  ` : `
+  <rect x="${r(bkX1)}" y="${r(firstY)}" width="${r(bkW * scaleW)}" height="${6}"
+    fill="${IKB}" fill-opacity="0.25" stroke="${IKB}" stroke-width="1.2"/>
+  `}
+
+  <!-- Bemaßung: Gebäudehöhe §75 BO Wien -->
+  ${dimV(traufeY, groundY, bkX2 + 14, `§75 GH ${p.gebaeudehoehe_max_m} m`)}
+
+  <!-- Bemaßung: Traufenlinie -->
+  ${line(bkX1 - 20, traufeY, bkX2 + 60, traufeY, `stroke="${IKB_MID}" stroke-width="0.7" stroke-dasharray="8,4"`)}
+  ${text(bkX2 + 14, traufeY - 4, 'Traufenlinie', `font-size="7.5" fill="${IKB}" font-family="${FONT}"`)}
+
+  ${p.dachform === 'sattel' ? `
+  <!-- Bemaßung: Firstlinie -->
+  ${line(bkX1 - 20, firstY, (bkX1 + bkX2) / 2 - 5, firstY, `stroke="${GRAY_LT}" stroke-width="0.7" stroke-dasharray="6,3"`)}
+  ${text(bkX1 - 18, firstY - 4, 'Firstlinie', `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ` : ''}
+
+  <!-- Bemaßung: Breite Baukörper -->
+  ${dimH(bkX1, bkX2, groundY + 30, `${p.baukörper_breite_m} m`, true)}
+
+  <!-- Bemaßung: Gesamtbreite -->
+  ${dimH(plotX1, plotX2, groundY + 46, `${p.breite_m} m`, true)}
+
+  <!-- Bauwich Pfeil (vorne) -->
+  ${p.bauwich_vorne_m > 0 ? dimH(plotX1, bkX1, groundY + 30, `BW ${p.bauwich_vorne_m} m`, true) : ''}
+
+  <!-- Info rechts -->
+  ${text(W - PAD_R + 6, PAD_T + 14, `BKl. ${p.bauklasse}`, `font-size="9" fill="${IKB}" font-family="${FONT}" font-weight="bold"`)}
+  ${text(W - PAD_R + 6, PAD_T + 28, `${p.max_geschosse} Gesch.`, `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  ${text(W - PAD_R + 6, PAD_T + 40, p.dachform === 'sattel' ? 'Satteldach' : 'Flachdach', `font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
 </svg>`
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Isometrie ───────────────────────────────────────────────────────────────
 
-function dimLineH(x: number, y: number, w: number, label: string, color = GRAY): string {
-  const mid = x + w / 2
-  return `
-  <line x1="${x}" y1="${y - 3}" x2="${x}" y2="${y + 3}" stroke="${color}" stroke-width="0.8"/>
-  <line x1="${x}" y1="${y}" x2="${x + w}" y2="${y}" stroke="${color}" stroke-width="0.8"/>
-  <line x1="${x + w}" y1="${y - 3}" x2="${x + w}" y2="${y + 3}" stroke="${color}" stroke-width="0.8"/>
-  <text x="${mid}" y="${y - 5}" text-anchor="middle" font-size="9" fill="${color}">${label}</text>`
-}
+export function generateIsometrie(p: BauParam): string {
+  const W = 560, H = 380
 
-function dimLineV(x: number, y: number, h: number, label: string, color = GRAY): string {
-  const mid = y + h / 2
-  return `
-  <line x1="${x - 3}" y1="${y}" x2="${x + 3}" y2="${y}" stroke="${color}" stroke-width="0.8"/>
-  <line x1="${x}" y1="${y}" x2="${x}" y2="${y + h}" stroke="${color}" stroke-width="0.8"/>
-  <line x1="${x - 3}" y1="${y + h}" x2="${x + 3}" y2="${y + h}" stroke="${color}" stroke-width="0.8"/>
-  <text x="${x + 8}" y="${mid + 4}" font-size="9" fill="${color}">${label}</text>`
-}
+  // Isometrische Projektion: x→rechts, z→vorne (Tiefe), y→hoch
+  const S = Math.min(280 / p.baukörper_breite_m, 200 / p.baukörper_tiefe_m, 160 / p.gebaeudehoehe_max_m)
+  const bkW = p.baukörper_breite_m * S
+  const bkD = p.baukörper_tiefe_m * S
+  const bkH = p.gebaeudehoehe_max_m * S
 
-function heightDim(x: number, y1: number, y2: number, label: string, sublabel = '', color = IKB): string {
-  const mid = (y1 + y2) / 2
-  return `
-  <line x1="${x - 3}" y1="${y1}" x2="${x + 3}" y1="${y1}" stroke="${color}" stroke-width="0.7"/>
-  <line x1="${x - 3}" y1="${y1}" x2="${x + 3}" y2="${y1}" stroke="${color}" stroke-width="0.7"/>
-  <line x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" stroke="${color}" stroke-width="0.7"/>
-  <line x1="${x - 3}" y1="${y2}" x2="${x + 3}" y2="${y2}" stroke="${color}" stroke-width="0.7"/>
-  <text x="${x + 6}" y="${mid + 4}" font-size="9.5" fill="${color}" font-weight="bold">${label}</text>
-  ${sublabel ? `<text x="${x + 6}" y="${mid + 16}" font-size="7.5" fill="${color}" opacity="0.7">${sublabel}</text>` : ''}`
-}
+  const cx = W * 0.42
+  const cy = H * 0.62
 
-function smallDim(x: number, y: number, label: string): string {
-  return `<text x="${x}" y="${y}" text-anchor="middle" font-size="7.5" fill="#999">${label}</text>`
-}
+  // Isometrische Projektion (Standardwinkel 30°)
+  const isoX = (x: number, z: number) => cx + (x - z) * 0.6
+  const isoY = (x: number, y: number, z: number) => cy - y * 0.85 + (x + z) * 0.30
 
-function legenzeile(x: number, y: number, key: string, val: string): string {
-  return `
-  <text x="${x}" y="${y}" font-size="8" fill="#888">${key}</text>
-  <text x="100" y="${y}" text-anchor="end" font-size="8.5" fill="${IKB}" font-weight="bold">${val}</text>`
-}
+  // Eckpunkte des Baukörpers (x=0=links, z=0=vorne)
+  const P = (x: number, y: number, z: number) => ({ x: isoX(x, z), y: isoY(x, y, z) })
 
-function northArrow(x: number, y: number): string {
-  return `
-  <polygon points="${x},${y - 10} ${x - 4},${y + 4} ${x},${y + 1} ${x + 4},${y + 4}" fill="${GRAY}" opacity="0.7"/>
-  <text x="${x}" y="${y + 16}" text-anchor="middle" font-size="8" fill="${GRAY}" opacity="0.7">N</text>`
-}
+  // Bodengrundriss-Ecken
+  const p00 = P(0, 0, 0), p10 = P(bkW, 0, 0)
+  const p01 = P(0, 0, bkD), p11 = P(bkW, 0, bkD)
 
-function massStab(x: number, y: number, scale: number): string {
-  // Zeige 5m oder 10m als Maßstab
-  const barM = scale > 8 ? 5 : 10
-  const barPx = barM * scale
-  return `
-  <line x1="${x}" y1="${y}" x2="${x + barPx}" y2="${y}" stroke="${GRAY}" stroke-width="1.5"/>
-  <line x1="${x}" y1="${y - 3}" x2="${x}" y2="${y + 3}" stroke="${GRAY}" stroke-width="1.2"/>
-  <line x1="${x + barPx}" y1="${y - 3}" x2="${x + barPx}" y2="${y + 3}" stroke="${GRAY}" stroke-width="1.2"/>
-  <text x="${x + barPx / 2}" y="${y + 11}" text-anchor="middle" font-size="7.5" fill="${GRAY}">${barM} m</text>`
+  // Deckenecken
+  const t00 = P(0, bkH, 0), t10 = P(bkW, bkH, 0)
+  const t01 = P(0, bkH, bkD), t11 = P(bkW, bkH, bkD)
+
+  function poly(pts: Array<{ x: number; y: number }>, attr: string) {
+    return `<polygon points="${pts.map(pt => `${r(pt.x)},${r(pt.y)}`).join(' ')}" ${attr}/>`
+  }
+
+  // Dach
+  const firstPtLeft = P(0, bkH + bkW * 0.35, bkD / 2)
+  const firstPtRight = P(bkW, bkH + bkW * 0.35, bkD / 2)
+
+  const sattelFront = [t00, t10, firstPtRight, firstPtLeft]
+  const sattelRight = [t10, t11, firstPtRight]
+  // Satteldach Rückseite + linke Seite:
+  const sattelBack = [t01, t11, firstPtRight, firstPtLeft]
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="${FONT}">
+  <rect width="${W}" height="${H}" fill="white"/>
+
+  <!-- Titel -->
+  <text x="28" y="22" font-size="8" fill="${GRAY_LT}" letter-spacing="2" font-family="${FONT}">ISOMETRIE — MAX. BAUKÖRPER</text>
+  <line x1="28" y1="28" x2="${W - 20}" y2="28" stroke="${BORDER}" stroke-width="0.5"/>
+
+  <!-- Geländefläche (vereinfacht) -->
+  ${poly([
+    P(-20, 0, -10), P(bkW + 30, 0, -10),
+    P(bkW + 30, 0, bkD + 20), P(-20, 0, bkD + 20),
+  ], `fill="${BEIGE}" stroke="${BORDER}" stroke-width="0.6"`)}
+
+  <!-- Grundfläche Baukörper -->
+  ${poly([p00, p10, p11, p01], `fill="${BEIGE}" stroke="${IKB}" stroke-width="0.8"`)}
+
+  <!-- Rückwand (linke Seite in Isometrie) -->
+  ${poly([p01, t01, t11, p11], `fill="${IKB}" fill-opacity="0.10" stroke="${IKB}" stroke-width="1.2"`)}
+
+  <!-- Seitenwand rechts (z-Seite, dunkel) -->
+  ${poly([p11, t11, t10, p10], `fill="${IKB}" fill-opacity="0.20" stroke="${IKB}" stroke-width="1.2"`)}
+
+  <!-- Frontwand (hell, zum Betrachter) -->
+  ${poly([p00, p10, t10, t00], `fill="${IKB}" fill-opacity="0.12" stroke="${IKB}" stroke-width="1.5"`)}
+
+  <!-- Deckenplatte -->
+  ${poly([t00, t10, t11, t01], `fill="${IKB}" fill-opacity="0.08" stroke="${IKB}" stroke-width="1"`)}
+
+  ${p.dachform === 'sattel' ? `
+  <!-- Satteldach -->
+  ${poly(sattelFront, `fill="${IKB}" fill-opacity="0.25" stroke="${IKB}" stroke-width="1.4"`)}
+  ${poly(sattelRight, `fill="${IKB}" fill-opacity="0.35" stroke="${IKB}" stroke-width="1.2"`)}
+  ${poly(sattelBack, `fill="${IKB}" fill-opacity="0.15" stroke="${IKB}" stroke-width="1"`)}
+  <!-- Firstlinie -->
+  ${line(firstPtLeft.x, firstPtLeft.y, firstPtRight.x, firstPtRight.y, `stroke="${IKB}" stroke-width="1.6"`)}
+  ` : `
+  <!-- Flachdach Aufbau -->
+  ${poly([t00, t10, t11, t01].map(pt => ({ x: pt.x, y: pt.y - 4 })), `fill="${IKB}" fill-opacity="0.25" stroke="${IKB}" stroke-width="1.2"`)}
+  `}
+
+  <!-- Höhenbemaßung -->
+  ${line(t00.x - 24, t00.y, t00.x, t00.y, `stroke="${GRAY_LT}" stroke-width="0.6"`)}
+  ${line(p00.x - 24, p00.y, p00.x, p00.y, `stroke="${GRAY_LT}" stroke-width="0.6"`)}
+  ${line(p00.x - 24, p00.y, p00.x - 24, t00.y, `stroke="${GRAY_LT}" stroke-width="0.8"`)}
+  ${text(p00.x - 44, (p00.y + t00.y) / 2 + 3, `§75 GH\n${p.gebaeudehoehe_max_m} m`, `text-anchor="middle" font-size="7.5" fill="${GRAY}" font-family="${FONT}"`)}
+  <text x="${r(p00.x - 38)}" y="${r((p00.y + t00.y) / 2 - 3)}" text-anchor="middle" font-size="7.5" fill="${GRAY}" font-family="${FONT}">§75 GH</text>
+  <text x="${r(p00.x - 38)}" y="${r((p00.y + t00.y) / 2 + 8)}" text-anchor="middle" font-size="7.5" fill="${IKB}" font-family="${FONT}" font-weight="bold">${p.gebaeudehoehe_max_m} m</text>
+
+  <!-- Breitenbemaßung -->
+  ${line(p00.x, p00.y + 14, p10.x, p10.y + 14, `stroke="${GRAY_LT}" stroke-width="0.8"`)}
+  <text x="${r((p00.x + p10.x) / 2)}" y="${r((p00.y + p10.y) / 2 + 26)}" text-anchor="middle" font-size="7.5" fill="${GRAY}" font-family="${FONT}">${p.baukörper_breite_m} m</text>
+
+  <!-- Tiefenbemaßung -->
+  ${line(p10.x + 8, p10.y, p11.x + 8, p11.y, `stroke="${GRAY_LT}" stroke-width="0.8"`)}
+  <text x="${r((p10.x + p11.x) / 2 + 18)}" y="${r((p10.y + p11.y) / 2 + 3)}" text-anchor="start" font-size="7.5" fill="${GRAY}" font-family="${FONT}">${p.baukörper_tiefe_m} m</text>
+
+  <!-- Info-Box -->
+  <rect x="${W - 130}" y="${H - 100}" width="110" height="90" fill="white" stroke="${BORDER}" stroke-width="0.8" rx="2"/>
+  <text x="${W - 74}" y="${H - 84}" text-anchor="middle" font-size="7" fill="${GRAY_LT}" letter-spacing="1.5" font-family="${FONT}">KENNWERTE</text>
+  <text x="${W - 124}" y="${H - 70}" font-size="7.5" fill="${GRAY}" font-family="${FONT}">BGF: ${p.bgf_gesamt_m2} m²</text>
+  <text x="${W - 124}" y="${H - 58}" font-size="7.5" fill="${GRAY}" font-family="${FONT}">NGF: ${p.ngf_geschaetzt_m2} m²</text>
+  <text x="${W - 124}" y="${H - 46}" font-size="7.5" fill="${GRAY}" font-family="${FONT}">Gesch.: ${p.max_geschosse}</text>
+  <text x="${W - 124}" y="${H - 34}" font-size="7.5" fill="${GRAY}" font-family="${FONT}">Stpl.: ${p.stellplaetze_pflicht}</text>
+  <text x="${W - 124}" y="${H - 22}" font-size="7.5" fill="${IKB}" font-family="${FONT}">${p.widmung} / BKl. ${p.bauklasse}</text>
+</svg>`
 }
