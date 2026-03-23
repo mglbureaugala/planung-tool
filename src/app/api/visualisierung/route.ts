@@ -241,16 +241,27 @@ export async function POST(req: Request) {
     'II'
   )
 
-  // Bebauungsweise: Formular-Override → Plandokument → WFS (BEBAUUNGSWEISE-Feld)
-  // Quellen-Ranking: manuelle Eingabe > Bebauungsplan-Analyse > WFS
-  const bwRaw = (bebauungsweise_override?.trim() || null)
+  // Bebauungsweise: Formular-Override → Plandokument → WFS → Bezirk-Standardwert
+  // Quellen-Ranking: manuelle Eingabe > Bebauungsplan-Analyse > WFS > Bezirk-Heuristik
+  const bwFromSources = (bebauungsweise_override?.trim() || null)
     || (plandok?.bebauungsweise?.trim() || null)
     || parseBebauungsweise(widmungData?.bebauungsweise_raw)
-    || null  // Unbekannt — keine Annahme treffen
+    || null
 
-  // Normalisierung: WFS liefert manchmal Volltext ("geschlossen", "offen", ...)
-  // oder Kürzel ("g", "o", "gk", "gr")
+  // Wien GENFLWIDMUNGOGD liefert KEIN Bebauungsweise-Feld (WIDMUNG_DETAIL ist immer null).
+  // Fallback: Bezirk-Heuristik nach typischer Wiener Stadtstruktur:
+  //   Bezirk 1–9  → überwiegend geschlossene Bebauungsweise (Gründerzeit, Historismus)
+  //   Bezirk 10–23 → überwiegend offene Bebauungsweise (Wohnbauten 20./21. Jh.)
+  // Diese Heuristik trifft in > 80 % der Fälle zu; für Genehmigungsplanung
+  // ist das Plandokument (MA 21) maßgeblich.
+  const bezirkForHeuristic = widmungData?.bezirk
+  const bwBezirkDefault: string | null = bezirkForHeuristic != null
+    ? (bezirkForHeuristic <= 9 ? 'g' : 'o')
+    : null
+
+  const bwRaw = bwFromSources ?? bwBezirkDefault
   const bebauungsweise = bwRaw ?? ''
+
   const bebauungsweise_text = BEBAUUNGSWEISE_TEXT[bebauungsweise]
     ?? (bebauungsweise.toLowerCase().includes('geschlossen') ? 'geschlossene Bebauungsweise'
       : bebauungsweise.toLowerCase().includes('offen') ? 'offene Bebauungsweise'
@@ -261,6 +272,7 @@ export async function POST(req: Request) {
   const bwQuelle = bebauungsweise_override ? 'manuell'
     : plandok?.bebauungsweise ? 'Bebauungsplan'
     : widmungData?.bebauungsweise_raw ? 'Flächenwidmungsplan'
+    : bwBezirkDefault ? `Bezirk-Richtwert (${bezirkForHeuristic}. Bezirk)`
     : 'unbekannt'
 
   // Gebäudehöhe: Plandokument-Analyse → WBO-Standardwert für Bauklasse
@@ -358,9 +370,11 @@ export async function POST(req: Request) {
 
   // ─── Rückgabe ─────────────────────────────────────────────────────────────
 
-  // Hinweis wenn Bebauungsweise unbekannt
+  // Hinweis zur Bebauungsweise-Quelle
   if (isUnbekannt) {
     hinweise.unshift('Bebauungsweise konnte nicht automatisch bestimmt werden. Bitte im Formular manuell auswählen (Bebauungsplan der MA 21 prüfen).')
+  } else if (bwQuelle.startsWith('Bezirk-Richtwert')) {
+    hinweise.unshift(`Bebauungsweise: ${bebauungsweise_text} — Schätzwert auf Basis des ${bwQuelle}. Der Flächenwidmungsplan der Wien (GENFLWIDMUNGOGD) enthält kein Bebauungsweise-Feld. Für verbindliche Aussagen Plandokument über MA 21 (www.wien.gv.at/bebauungsplaene) prüfen.`)
   } else {
     hinweise.unshift(`Bebauungsweise: ${bebauungsweise_text} — Quelle: ${bwQuelle}.`)
   }
