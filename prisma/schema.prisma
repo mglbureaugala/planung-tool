@@ -71,6 +71,7 @@ model ZtDocument {
   pfad       String    @unique
   thema      ZtThema
   quelle     String?
+  veraltet   Boolean   @default(false)
   erstelltAm DateTime  @default(now())
   chunks     ZtChunk[]
 

@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       WHERE
         to_tsvector('german', c.text) @@ plainto_tsquery('german', ${frage})
         AND d.thema::text = ${thema}
+        AND d.veraltet = false
       ORDER BY ts_rank(to_tsvector('german', c.text), plainto_tsquery('german', ${frage})) DESC
       LIMIT 12
     `
@@ -47,7 +48,9 @@ export async function POST(req: NextRequest) {
       SELECT c.text, d.titel, d.thema::text, d.quelle, c.seite
       FROM zt_chunks c
       JOIN zt_documents d ON d.id = c."documentId"
-      WHERE to_tsvector('german', c.text) @@ plainto_tsquery('german', ${frage})
+      WHERE
+        to_tsvector('german', c.text) @@ plainto_tsquery('german', ${frage})
+        AND d.veraltet = false
       ORDER BY ts_rank(to_tsvector('german', c.text), plainto_tsquery('german', ${frage})) DESC
       LIMIT 12
     `

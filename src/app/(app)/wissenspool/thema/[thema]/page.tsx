@@ -88,9 +88,16 @@ export default async function ThemaPage({ params }: { params: Promise<{ thema: s
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', background: 'var(--border-color)', border: '1px solid var(--border-color)', borderRadius: 3, overflow: 'hidden' }}>
               {dokumente.map(d => (
-                <div key={d.id} style={{ background: 'var(--surface)', padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={d.id} style={{ background: d.veraltet ? '#fffbf0' : 'var(--surface)', padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text)' }}>{d.titel}</div>
+                    <div style={{ fontSize: '0.85rem', color: d.veraltet ? '#a07800' : 'var(--text)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      {d.titel}
+                      {d.veraltet && (
+                        <span style={{ fontSize: '0.6rem', background: '#f59e0b', color: '#fff', padding: '0.1rem 0.35rem', borderRadius: 2, fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                          VERALTET
+                        </span>
+                      )}
+                    </div>
                     {d.quelle && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{d.quelle}</div>}
                   </div>
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-light)', whiteSpace: 'nowrap', marginLeft: '1rem' }}>

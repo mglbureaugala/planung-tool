@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
       WHERE
         to_tsvector('german', c.text) @@ plainto_tsquery('german', ${q})
         AND d.thema::text = ${thema}
+        AND d.veraltet = false
       ORDER BY rank DESC
       LIMIT 20
     `
@@ -47,6 +48,7 @@ export async function GET(req: NextRequest) {
       JOIN zt_documents d ON d.id = c."documentId"
       WHERE
         to_tsvector('german', c.text) @@ plainto_tsquery('german', ${q})
+        AND d.veraltet = false
       ORDER BY rank DESC
       LIMIT 20
     `
