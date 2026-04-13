@@ -154,6 +154,8 @@ const NORMEN_SKIP = new Set([
   'On B 3407_Fliesen_ARBEITSENTWURF_Auszug.PDF',         // Entwurf-Auszug → OENORM_B_3407_2019
   'ON B 3407.pdf',                                       // ältere Version → OENORM_B_3407_2019
   'ÖN 1800_Graundflächen und Bauinhalten.pdf',           // alt → ON EN B_1800_2013
+  'ON B 1800_Ermittlung von Bauflächenund Rauminhalten von Bauwerken.pdf', // alt → ON EN B_1800_2013_08_01
+  'ON B 1801-1_Bauprojekt- und Objektmanagement_Teil1_Objekterrichtung.pdf', // alt → ON EN B_1801-1_2015_12_01
   // OIB: Rev.1 ist aktueller (nicht-Rev.1 überspringen)
   'oib-rl_zitierte_normen_und_sonstige_technische_regelwerke_ausgabe_mai_2023.pdf',
   // Keine Normtexte / Nicht-österreichische Normen
